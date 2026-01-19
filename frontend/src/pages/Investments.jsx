@@ -54,11 +54,20 @@ function PortfolioCard({ summary, history }) {
       <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-dark-700">
         <div>
           <div className="text-dark-400 text-xs">Cost Basis</div>
-          <div className="font-semibold">{formatCurrency(summary.total_cost_basis || 0)}</div>
+          <div className="font-semibold">
+            {summary.total_cost_basis ? formatCurrency(summary.total_cost_basis) : 'N/A'}
+          </div>
         </div>
         <div>
-          <div className="text-dark-400 text-xs">Holdings</div>
-          <div className="font-semibold">{summary.holdings_count} positions</div>
+          <div className="text-dark-400 text-xs">
+            {summary.holdings_count > 0 ? 'Holdings' : 'Accounts'}
+          </div>
+          <div className="font-semibold">
+            {summary.holdings_count > 0
+              ? `${summary.holdings_count} positions`
+              : `${summary.accounts_count} accounts`
+            }
+          </div>
         </div>
       </div>
     </div>
@@ -283,7 +292,7 @@ export default function Investments() {
     )
   }
 
-  if (!summary || summary.holdings_count === 0) {
+  if (!summary || summary.accounts_count === 0) {
     return (
       <div className="p-4">
         <h1 className="text-xl font-bold mb-4">Investments</h1>

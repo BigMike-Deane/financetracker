@@ -1051,69 +1051,100 @@ async def get_investment_summary(db: Session = Depends(get_db), _auth: bool = De
         Account.is_active == True
     ).all()
 
-    # Get all holdings
+    # Get all holdings (may be empty if SimpleFIN doesn't provide them)
     holdings = db.query(Holding).join(Account).filter(
         Account.account_type.in_(INVESTMENT_ACCOUNT_TYPES)
     ).all()
 
-    # Calculate totals
-    total_value = sum(h.current_value or 0 for h in holdings)
-    total_cost_basis = sum(h.cost_basis or 0 for h in holdings if h.cost_basis)
-    total_gain_loss = total_value - total_cost_basis if total_cost_basis > 0 else None
-    total_gain_loss_pct = (total_gain_loss / total_cost_basis * 100) if total_cost_basis and total_cost_basis > 0 else None
+    # If we have holdings, use them for detailed breakdown
+    # Otherwise, fall back to account balances
+    has_holdings = len(holdings) > 0
 
-    # Group by account
-    by_account = {}
-    for h in holdings:
-        account_name = h.account.name if h.account else "Unknown"
-        account_type = h.account.account_type.value if h.account else "other"
-        key = f"{h.account_id}"
-        if key not in by_account:
-            by_account[key] = {
-                "account_id": h.account_id,
-                "account_name": account_name,
-                "account_type": account_type,
-                "institution": h.account.institution.name if h.account and h.account.institution else None,
-                "value": 0,
-                "cost_basis": 0,
+    if has_holdings:
+        # Calculate totals from holdings
+        total_value = sum(h.current_value or 0 for h in holdings)
+        total_cost_basis = sum(h.cost_basis or 0 for h in holdings if h.cost_basis)
+
+        # Group by account from holdings
+        by_account = {}
+        for h in holdings:
+            account_name = h.account.name if h.account else "Unknown"
+            account_type = h.account.account_type.value if h.account else "other"
+            key = f"{h.account_id}"
+            if key not in by_account:
+                by_account[key] = {
+                    "account_id": h.account_id,
+                    "account_name": account_name,
+                    "account_type": account_type,
+                    "institution": h.account.institution.name if h.account and h.account.institution else None,
+                    "value": 0,
+                    "cost_basis": 0,
+                    "holdings_count": 0
+                }
+            by_account[key]["value"] += h.current_value or 0
+            by_account[key]["cost_basis"] += h.cost_basis or 0
+            by_account[key]["holdings_count"] += 1
+
+        # Group by security type
+        by_type = {}
+        for h in holdings:
+            sec_type = h.security_type or "Other"
+            if sec_type not in by_type:
+                by_type[sec_type] = {"type": sec_type, "value": 0, "count": 0}
+            by_type[sec_type]["value"] += h.current_value or 0
+            by_type[sec_type]["count"] += 1
+
+        types_list = sorted(by_type.values(), key=lambda x: x["value"], reverse=True)
+
+        # Top holdings
+        top_holdings = sorted(holdings, key=lambda h: h.current_value or 0, reverse=True)[:10]
+        top_holdings_list = [{
+            "security_name": h.security_name,
+            "ticker": h.ticker,
+            "value": h.current_value,
+            "cost_basis": h.cost_basis,
+            "gain_loss": (h.current_value - h.cost_basis) if h.cost_basis else None,
+            "gain_loss_pct": ((h.current_value - h.cost_basis) / h.cost_basis * 100) if h.cost_basis and h.cost_basis > 0 else None,
+            "allocation_pct": (h.current_value / total_value * 100) if total_value > 0 else 0
+        } for h in top_holdings]
+    else:
+        # No holdings - use account balances instead
+        total_value = sum(acc.current_balance or 0 for acc in investment_accounts)
+        total_cost_basis = None  # Can't calculate without holdings
+
+        # Build account list from accounts directly
+        by_account = {}
+        for acc in investment_accounts:
+            by_account[str(acc.id)] = {
+                "account_id": acc.id,
+                "account_name": acc.name,
+                "account_type": acc.account_type.value,
+                "institution": acc.institution.name if acc.institution else None,
+                "value": acc.current_balance or 0,
+                "cost_basis": None,
                 "holdings_count": 0
             }
-        by_account[key]["value"] += h.current_value or 0
-        by_account[key]["cost_basis"] += h.cost_basis or 0
-        by_account[key]["holdings_count"] += 1
 
-    # Calculate gain/loss for each account
+        types_list = []  # No breakdown without holdings
+        top_holdings_list = []  # No individual holdings
+
+    # Calculate gain/loss for each account (only if cost basis available)
     accounts_list = []
     for acc in by_account.values():
-        acc["gain_loss"] = acc["value"] - acc["cost_basis"] if acc["cost_basis"] > 0 else None
-        acc["gain_loss_pct"] = (acc["gain_loss"] / acc["cost_basis"] * 100) if acc["cost_basis"] and acc["cost_basis"] > 0 else None
+        if acc["cost_basis"] and acc["cost_basis"] > 0:
+            acc["gain_loss"] = acc["value"] - acc["cost_basis"]
+            acc["gain_loss_pct"] = (acc["gain_loss"] / acc["cost_basis"] * 100)
+        else:
+            acc["gain_loss"] = None
+            acc["gain_loss_pct"] = None
         accounts_list.append(acc)
 
     # Sort by value descending
     accounts_list.sort(key=lambda x: x["value"], reverse=True)
 
-    # Group by security type
-    by_type = {}
-    for h in holdings:
-        sec_type = h.security_type or "Other"
-        if sec_type not in by_type:
-            by_type[sec_type] = {"type": sec_type, "value": 0, "count": 0}
-        by_type[sec_type]["value"] += h.current_value or 0
-        by_type[sec_type]["count"] += 1
-
-    types_list = sorted(by_type.values(), key=lambda x: x["value"], reverse=True)
-
-    # Top holdings
-    top_holdings = sorted(holdings, key=lambda h: h.current_value or 0, reverse=True)[:10]
-    top_holdings_list = [{
-        "security_name": h.security_name,
-        "ticker": h.ticker,
-        "value": h.current_value,
-        "cost_basis": h.cost_basis,
-        "gain_loss": (h.current_value - h.cost_basis) if h.cost_basis else None,
-        "gain_loss_pct": ((h.current_value - h.cost_basis) / h.cost_basis * 100) if h.cost_basis and h.cost_basis > 0 else None,
-        "allocation_pct": (h.current_value / total_value * 100) if total_value > 0 else 0
-    } for h in top_holdings]
+    # Calculate overall gain/loss
+    total_gain_loss = (total_value - total_cost_basis) if total_cost_basis and total_cost_basis > 0 else None
+    total_gain_loss_pct = (total_gain_loss / total_cost_basis * 100) if total_cost_basis and total_cost_basis > 0 else None
 
     return {
         "total_value": total_value,
@@ -1122,6 +1153,7 @@ async def get_investment_summary(db: Session = Depends(get_db), _auth: bool = De
         "total_gain_loss_pct": total_gain_loss_pct,
         "accounts_count": len(investment_accounts),
         "holdings_count": len(holdings),
+        "has_holdings": has_holdings,
         "by_account": accounts_list,
         "by_type": types_list,
         "top_holdings": top_holdings_list
