@@ -90,7 +90,7 @@ function SubscriptionCard({ subscription, onClick, onDelete }) {
     return `In ${Math.round(daysUntil / 30)} mo`
   }
 
-  const isUpcomingSoon = subscription.days_until_charge <= 7
+  const isUpcomingSoon = subscription.days_until_charge != null && subscription.days_until_charge <= 7
 
   return (
     <div
@@ -103,7 +103,7 @@ function SubscriptionCard({ subscription, onClick, onDelete }) {
           <div className="font-medium">{subscription.name}</div>
           <div className="text-dark-400 text-xs flex flex-wrap gap-x-2">
             <span>{subscription.billing_cycle}</span>
-            {subscription.days_until_charge !== undefined && (
+            {subscription.days_until_charge != null && (
               <span className={isUpcomingSoon ? 'text-yellow-400' : ''}>
                 • {formatNextCharge(subscription.days_until_charge)}
               </span>
