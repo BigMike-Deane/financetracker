@@ -128,14 +128,14 @@ function AccountsList({ accounts }) {
   )
 }
 
-function SpendingCard({ spending, monthlyBudget = 4000 }) {
+function SpendingCard({ spending }) {
   const today = new Date()
   const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
   const dayOfMonth = today.getDate()
   const daysRemaining = daysInMonth - dayOfMonth
 
-  // Use provided budget or fall back to default
-  const budget = monthlyBudget
+  // Use dynamic budget from API (75% of 3-month avg income) or fall back to default
+  const budget = spending.budget || 4000
   const percentSpent = budget > 0 ? (spending.month_total / budget) * 100 : 0
 
   return (

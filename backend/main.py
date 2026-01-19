@@ -532,18 +532,47 @@ async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(req
 
     # Get this month's spending (negative amounts = expenses)
     # Only from spending accounts (checking, savings, credit) - exclude investment accounts
+    # ALSO exclude transfer categories (credit card payments, internal transfers)
     first_of_month = date.today().replace(day=1)
+
+    transfer_categories = [
+        TransactionCategory.FINANCIAL_TRANSFER,
+        TransactionCategory.FINANCIAL_INVESTMENT,
+        TransactionCategory.INCOME_TRANSFER,
+    ]
+
     spending_query = db.query(
         func.sum(Transaction.amount)
     ).join(Account).filter(
         Transaction.date >= first_of_month,
         Transaction.amount < 0,  # Negative = expense
         Transaction.is_excluded == False,
-        Account.account_type.in_(SPENDING_ACCOUNT_TYPES)  # Exclude investment accounts
+        Account.account_type.in_(SPENDING_ACCOUNT_TYPES),  # Exclude investment accounts
+        ~Transaction.category.in_(transfer_categories)  # Exclude transfers
     ).scalar() or 0
     spending_query = abs(spending_query)  # Convert to positive for display
 
-    # Get spending by category this month (excluding investment accounts)
+    # Calculate dynamic budget: 75% of average gross income over past 3 months
+    three_months_ago = date.today() - timedelta(days=90)
+    total_income = db.query(
+        func.sum(Transaction.amount)
+    ).join(Account).filter(
+        Transaction.date >= three_months_ago,
+        Transaction.amount > 0,  # Positive = income
+        Transaction.is_excluded == False,
+        Account.account_type.in_(SPENDING_ACCOUNT_TYPES),  # From spending accounts
+        Transaction.category.in_([
+            TransactionCategory.INCOME_SALARY,
+            TransactionCategory.INCOME_OTHER,
+            TransactionCategory.INCOME_INVESTMENT,
+        ])
+    ).scalar() or 0
+
+    # Calculate monthly average and take 75%
+    avg_monthly_income = total_income / 3
+    dynamic_budget = avg_monthly_income * 0.75
+
+    # Get spending by category this month (excluding investment accounts and transfers)
     category_spending = db.query(
         Transaction.category,
         func.sum(Transaction.amount)
@@ -551,7 +580,8 @@ async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(req
         Transaction.date >= first_of_month,
         Transaction.amount < 0,  # Negative = expense
         Transaction.is_excluded == False,
-        Account.account_type.in_(SPENDING_ACCOUNT_TYPES)  # Exclude investment accounts
+        Account.account_type.in_(SPENDING_ACCOUNT_TYPES),  # Exclude investment accounts
+        ~Transaction.category.in_(transfer_categories)  # Exclude transfers
     ).group_by(Transaction.category).all()
 
     spending_by_category = [{
@@ -581,6 +611,8 @@ async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(req
         "accounts": accounts_by_type,
         "spending": {
             "month_total": spending_query,
+            "budget": dynamic_budget,
+            "avg_monthly_income": avg_monthly_income,
             "by_category": spending_by_category[:10]  # Top 10 categories
         }
     }
