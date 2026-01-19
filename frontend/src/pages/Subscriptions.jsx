@@ -73,11 +73,24 @@ function TransactionHistoryModal({ subscription, transactions, loading, onClose 
 
 function SubscriptionCard({ subscription, onClick, onDelete }) {
   const cycleLabel = {
-    monthly: '/mo',
-    annual: '/yr',
     weekly: '/wk',
-    quarterly: '/qtr'
+    biweekly: '/2wk',
+    monthly: '/mo',
+    quarterly: '/qtr',
+    semiannual: '/6mo',
+    annual: '/yr'
   }
+
+  const formatNextCharge = (daysUntil) => {
+    if (daysUntil === 0) return 'Today'
+    if (daysUntil === 1) return 'Tomorrow'
+    if (daysUntil <= 7) return `In ${daysUntil} days`
+    if (daysUntil <= 14) return 'Next week'
+    if (daysUntil <= 30) return `In ${Math.ceil(daysUntil / 7)} weeks`
+    return `In ${Math.round(daysUntil / 30)} mo`
+  }
+
+  const isUpcomingSoon = subscription.days_until_charge <= 7
 
   return (
     <div
@@ -88,9 +101,13 @@ function SubscriptionCard({ subscription, onClick, onDelete }) {
         <span className="text-2xl">🔁</span>
         <div>
           <div className="font-medium">{subscription.name}</div>
-          <div className="text-dark-400 text-xs">
-            {subscription.billing_cycle}
-            {subscription.last_charge_date && ` • Last: ${(() => { const [y,m,d] = subscription.last_charge_date.split('-').map(Number); return new Date(y,m-1,d).toLocaleDateString() })()}`}
+          <div className="text-dark-400 text-xs flex flex-wrap gap-x-2">
+            <span>{subscription.billing_cycle}</span>
+            {subscription.days_until_charge !== undefined && (
+              <span className={isUpcomingSoon ? 'text-yellow-400' : ''}>
+                • {formatNextCharge(subscription.days_until_charge)}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -99,6 +116,11 @@ function SubscriptionCard({ subscription, onClick, onDelete }) {
           <div className="font-semibold">
             {formatCurrency(subscription.expected_amount)}{cycleLabel[subscription.billing_cycle] || '/mo'}
           </div>
+          {subscription.monthly_equivalent && subscription.billing_cycle !== 'monthly' && (
+            <div className="text-dark-500 text-xs">
+              {formatCurrency(subscription.monthly_equivalent)}/mo
+            </div>
+          )}
           {subscription.amount_changed && (
             <div className="text-yellow-500 text-xs">Amount changed</div>
           )}
@@ -118,10 +140,12 @@ function SubscriptionCard({ subscription, onClick, onDelete }) {
 
 function DetectedSubscriptionCard({ subscription, onClick, onConfirm, onDismiss }) {
   const cycleLabel = {
-    monthly: '/mo',
-    annual: '/yr',
     weekly: '/wk',
-    quarterly: '/qtr'
+    biweekly: '/2wk',
+    monthly: '/mo',
+    quarterly: '/qtr',
+    semiannual: '/6mo',
+    annual: '/yr'
   }
 
   return (
@@ -241,10 +265,12 @@ function AddSubscriptionModal({ onClose, onAdd }) {
               onChange={(e) => setBillingCycle(e.target.value)}
               className="w-full px-4 py-3 bg-dark-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              <option value="monthly">Monthly</option>
-              <option value="annual">Annual</option>
               <option value="weekly">Weekly</option>
+              <option value="biweekly">Biweekly</option>
+              <option value="monthly">Monthly</option>
               <option value="quarterly">Quarterly</option>
+              <option value="semiannual">Semiannual (6 months)</option>
+              <option value="annual">Annual</option>
             </select>
           </div>
 
@@ -279,7 +305,7 @@ export default function Subscriptions() {
   const [loading, setLoading] = useState(true)
   const [subscriptions, setSubscriptions] = useState([])
   const [detected, setDetected] = useState([])
-  const [summary, setSummary] = useState({ monthly_total: 0, subscription_count: 0 })
+  const [summary, setSummary] = useState({ monthly_total: 0, annual_total: 0, subscription_count: 0, upcoming_week: [], upcoming_month: [] })
   const [showAddModal, setShowAddModal] = useState(false)
   const [detecting, setDetecting] = useState(false)
 
@@ -422,16 +448,49 @@ export default function Subscriptions() {
       <div className="p-4">
         <h1 className="text-xl font-bold mb-4">Subscriptions</h1>
 
-        {/* Monthly Total Card */}
+        {/* Summary Card */}
         <div className="card mb-4">
-          <div className="text-dark-400 text-sm mb-1">Monthly Total</div>
-          <div className="text-3xl font-bold mb-2">
-            {formatCurrency(summary.monthly_total)}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-dark-400 text-sm mb-1">Monthly</div>
+              <div className="text-2xl font-bold">
+                {formatCurrency(summary.monthly_total)}
+              </div>
+            </div>
+            <div>
+              <div className="text-dark-400 text-sm mb-1">Annual</div>
+              <div className="text-2xl font-bold">
+                {formatCurrency(summary.annual_total)}
+              </div>
+            </div>
           </div>
-          <div className="text-dark-400 text-sm">
+          <div className="text-dark-400 text-sm mt-3 pt-3 border-t border-dark-700">
             {summary.subscription_count} active subscription{summary.subscription_count !== 1 ? 's' : ''}
           </div>
         </div>
+
+        {/* Upcoming Charges */}
+        {summary.upcoming_week && summary.upcoming_week.length > 0 && (
+          <div className="card mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">📅</span>
+              <div className="font-semibold">Upcoming This Week</div>
+            </div>
+            <div className="space-y-2">
+              {summary.upcoming_week.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-center py-2 border-b border-dark-700 last:border-0">
+                  <div>
+                    <div className="font-medium text-sm">{item.name}</div>
+                    <div className="text-dark-400 text-xs">
+                      {item.days_until === 0 ? 'Today' : item.days_until === 1 ? 'Tomorrow' : `In ${item.days_until} days`}
+                    </div>
+                  </div>
+                  <div className="font-semibold">{formatCurrency(item.amount)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Confirmed Subscriptions */}
         <div className="mb-6">

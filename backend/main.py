@@ -1289,17 +1289,74 @@ def detect_billing_cycle(intervals: List[int]) -> Optional[str]:
     # Check for weekly (5-9 days)
     if 5 <= avg_interval <= 9:
         return "weekly"
+    # Check for bi-weekly (12-16 days)
+    elif 12 <= avg_interval <= 16:
+        return "biweekly"
     # Check for monthly (25-35 days)
     elif 25 <= avg_interval <= 35:
         return "monthly"
     # Check for quarterly (80-100 days)
     elif 80 <= avg_interval <= 100:
         return "quarterly"
-    # Check for annual (350-380 days)
-    elif 350 <= avg_interval <= 380:
+    # Check for semi-annual (170-200 days)
+    elif 170 <= avg_interval <= 200:
+        return "semiannual"
+    # Check for annual (340-390 days) - widened range
+    elif 340 <= avg_interval <= 390:
         return "annual"
 
     return None
+
+
+def calculate_next_charge_date(last_date: date, billing_cycle: str) -> date:
+    """Calculate the next expected charge date based on billing cycle"""
+    if not last_date:
+        return None
+
+    cycle_days = {
+        "weekly": 7,
+        "biweekly": 14,
+        "monthly": 30,
+        "quarterly": 91,
+        "semiannual": 182,
+        "annual": 365
+    }
+
+    days = cycle_days.get(billing_cycle, 30)
+    next_date = last_date + timedelta(days=days)
+
+    # If next date is in the past, advance to next occurrence
+    today = date.today()
+    while next_date < today:
+        next_date += timedelta(days=days)
+
+    return next_date
+
+
+def get_monthly_equivalent(amount: float, billing_cycle: str) -> float:
+    """Convert any billing cycle amount to monthly equivalent"""
+    multipliers = {
+        "weekly": 4.33,
+        "biweekly": 2.17,
+        "monthly": 1,
+        "quarterly": 1/3,
+        "semiannual": 1/6,
+        "annual": 1/12
+    }
+    return round(amount * multipliers.get(billing_cycle, 1), 2)
+
+
+def get_annual_equivalent(amount: float, billing_cycle: str) -> float:
+    """Convert any billing cycle amount to annual equivalent"""
+    multipliers = {
+        "weekly": 52,
+        "biweekly": 26,
+        "monthly": 12,
+        "quarterly": 4,
+        "semiannual": 2,
+        "annual": 1
+    }
+    return round(amount * multipliers.get(billing_cycle, 12), 2)
 
 
 @app.get("/api/subscriptions")
@@ -1315,26 +1372,42 @@ async def get_subscriptions(
 
     subscriptions = query.order_by(Subscription.is_confirmed.desc(), Subscription.name).all()
 
-    return [{
-        "id": sub.id,
-        "name": sub.name,
-        "merchant_pattern": sub.merchant_pattern,
-        "expected_amount": sub.expected_amount,
-        "billing_cycle": sub.billing_cycle,
-        "category": sub.category.value if sub.category else "subscription_other",
-        "category_display": get_category_display_name(sub.category) if sub.category else "Other Subscription",
-        "is_active": sub.is_active,
-        "is_confirmed": sub.is_confirmed,
-        "last_charge_date": sub.last_charge_date.isoformat() if sub.last_charge_date else None,
-        "last_charge_amount": sub.last_charge_amount,
-        "next_expected_date": sub.next_expected_date.isoformat() if sub.next_expected_date else None,
-        "amount_changed": sub.last_charge_amount and abs(sub.last_charge_amount - sub.expected_amount) > 0.50
-    } for sub in subscriptions]
+    today = date.today()
+    result = []
+
+    for sub in subscriptions:
+        # Calculate next charge date if not set
+        next_date = sub.next_expected_date
+        if not next_date and sub.last_charge_date:
+            next_date = calculate_next_charge_date(sub.last_charge_date, sub.billing_cycle)
+
+        days_until = (next_date - today).days if next_date else None
+
+        result.append({
+            "id": sub.id,
+            "name": sub.name,
+            "merchant_pattern": sub.merchant_pattern,
+            "expected_amount": sub.expected_amount,
+            "billing_cycle": sub.billing_cycle,
+            "category": sub.category.value if sub.category else "subscription_other",
+            "category_display": get_category_display_name(sub.category) if sub.category else "Other Subscription",
+            "is_active": sub.is_active,
+            "is_confirmed": sub.is_confirmed,
+            "last_charge_date": sub.last_charge_date.isoformat() if sub.last_charge_date else None,
+            "last_charge_amount": sub.last_charge_amount,
+            "next_expected_date": next_date.isoformat() if next_date else None,
+            "days_until_charge": days_until,
+            "monthly_equivalent": get_monthly_equivalent(sub.expected_amount, sub.billing_cycle),
+            "annual_equivalent": get_annual_equivalent(sub.expected_amount, sub.billing_cycle),
+            "amount_changed": sub.last_charge_amount and abs(sub.last_charge_amount - sub.expected_amount) > 0.50
+        })
+
+    return result
 
 
 @app.get("/api/subscriptions/summary")
 async def get_subscriptions_summary(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
-    """Get subscription summary with monthly total"""
+    """Get subscription summary with monthly and annual totals"""
     subscriptions = db.query(Subscription).filter(
         Subscription.is_active == True,
         Subscription.is_confirmed == True,
@@ -1342,36 +1415,69 @@ async def get_subscriptions_summary(db: Session = Depends(get_db), _auth: bool =
     ).all()
 
     monthly_total = 0
+    annual_total = 0
+
     for sub in subscriptions:
-        if sub.billing_cycle == "monthly":
-            monthly_total += sub.expected_amount
-        elif sub.billing_cycle == "annual":
-            monthly_total += sub.expected_amount / 12
-        elif sub.billing_cycle == "quarterly":
-            monthly_total += sub.expected_amount / 3
-        elif sub.billing_cycle == "weekly":
-            monthly_total += sub.expected_amount * 4.33  # Average weeks per month
+        monthly_total += get_monthly_equivalent(sub.expected_amount, sub.billing_cycle)
+        annual_total += get_annual_equivalent(sub.expected_amount, sub.billing_cycle)
+
+    # Calculate upcoming charges (next 7 and 30 days)
+    today = date.today()
+    next_week = today + timedelta(days=7)
+    next_month = today + timedelta(days=30)
+
+    upcoming_week = []
+    upcoming_month = []
+
+    for sub in subscriptions:
+        # Calculate next charge date if not set
+        next_date = sub.next_expected_date
+        if not next_date and sub.last_charge_date:
+            next_date = calculate_next_charge_date(sub.last_charge_date, sub.billing_cycle)
+
+        if next_date:
+            if today <= next_date <= next_week:
+                upcoming_week.append({
+                    "id": sub.id,
+                    "name": sub.name,
+                    "amount": sub.expected_amount,
+                    "date": next_date.isoformat(),
+                    "days_until": (next_date - today).days
+                })
+            elif today <= next_date <= next_month:
+                upcoming_month.append({
+                    "id": sub.id,
+                    "name": sub.name,
+                    "amount": sub.expected_amount,
+                    "date": next_date.isoformat(),
+                    "days_until": (next_date - today).days
+                })
+
+    # Sort by date
+    upcoming_week.sort(key=lambda x: x["days_until"])
+    upcoming_month.sort(key=lambda x: x["days_until"])
 
     return {
         "monthly_total": round(monthly_total, 2),
+        "annual_total": round(annual_total, 2),
         "subscription_count": len(subscriptions),
+        "upcoming_week": upcoming_week,
+        "upcoming_week_total": round(sum(u["amount"] for u in upcoming_week), 2),
+        "upcoming_month": upcoming_month,
+        "upcoming_month_total": round(sum(u["amount"] for u in upcoming_month), 2),
         "subscriptions": [{
             "name": sub.name,
             "amount": sub.expected_amount,
             "cycle": sub.billing_cycle,
-            "monthly_equivalent": round(
-                sub.expected_amount if sub.billing_cycle == "monthly"
-                else sub.expected_amount / 12 if sub.billing_cycle == "annual"
-                else sub.expected_amount / 3 if sub.billing_cycle == "quarterly"
-                else sub.expected_amount * 4.33, 2
-            )
+            "monthly_equivalent": get_monthly_equivalent(sub.expected_amount, sub.billing_cycle),
+            "annual_equivalent": get_annual_equivalent(sub.expected_amount, sub.billing_cycle)
         } for sub in subscriptions]
     }
 
 
 @app.post("/api/subscriptions/detect")
 async def detect_subscriptions(
-    days: int = Query(90, le=365),
+    days: int = Query(365, le=730),  # Default to 1 year for better annual detection
     db: Session = Depends(get_db),
     _auth: bool = Depends(require_auth)
 ):
@@ -1407,20 +1513,47 @@ async def detect_subscriptions(
         if merchant.lower() in existing_patterns:
             continue
 
-        # Need at least 2 transactions to detect pattern
-        if len(txns) < 2:
+        # Need at least 2 transactions for most cycles, but allow 1 for potential annuals
+        if len(txns) < 1:
             continue
 
-        # Check amount consistency (within 15% tolerance)
+        # Check amount consistency (within 20% tolerance for flexibility)
         amounts = [abs(t.amount) for t in txns]
         avg_amount = sum(amounts) / len(amounts)
 
-        # Skip if amounts vary too much
-        if any(abs(a - avg_amount) / avg_amount > 0.15 for a in amounts if avg_amount > 0):
+        # Skip very small amounts (under $1)
+        if avg_amount < 1:
             continue
 
         # Calculate intervals between charges
         sorted_txns = sorted(txns, key=lambda t: t.date)
+
+        # For single transactions, check if it looks like an annual subscription
+        if len(txns) == 1:
+            # Check if transaction is from ~1 year ago (could be annual)
+            days_ago = (date.today() - sorted_txns[0].date).days
+            # If it's between 11-13 months old and a "subscription-like" amount
+            if 330 <= days_ago <= 400 and avg_amount >= 20:
+                detected.append({
+                    "merchant": merchant.title(),
+                    "merchant_pattern": merchant,
+                    "amount": round(avg_amount, 2),
+                    "billing_cycle": "annual",
+                    "transaction_count": len(txns),
+                    "last_charge_date": sorted_txns[-1].date.isoformat(),
+                    "last_charge_amount": abs(sorted_txns[-1].amount),
+                    "next_expected_date": calculate_next_charge_date(sorted_txns[-1].date, "annual").isoformat(),
+                    "confidence": 0.5,  # Lower confidence for single transactions
+                    "monthly_equivalent": get_monthly_equivalent(avg_amount, "annual"),
+                    "annual_equivalent": avg_amount
+                })
+            continue
+
+        # Skip if amounts vary too much (20% tolerance)
+        amount_variance = [abs(a - avg_amount) / avg_amount for a in amounts if avg_amount > 0]
+        if amount_variance and max(amount_variance) > 0.20:
+            continue
+
         intervals = []
         for i in range(1, len(sorted_txns)):
             delta = (sorted_txns[i].date - sorted_txns[i-1].date).days
@@ -1433,16 +1566,12 @@ async def detect_subscriptions(
 
         # Calculate next expected date
         last_date = sorted_txns[-1].date
-        if cycle == "monthly":
-            next_date = last_date + timedelta(days=30)
-        elif cycle == "weekly":
-            next_date = last_date + timedelta(days=7)
-        elif cycle == "quarterly":
-            next_date = last_date + timedelta(days=90)
-        elif cycle == "annual":
-            next_date = last_date + timedelta(days=365)
-        else:
-            next_date = None
+        next_date = calculate_next_charge_date(last_date, cycle)
+
+        # Calculate confidence based on number of transactions and consistency
+        confidence = min(len(txns) / 4, 1.0)
+        if len(set(intervals)) == 1:  # Perfect consistency
+            confidence = min(confidence + 0.2, 1.0)
 
         detected.append({
             "merchant": merchant.title(),
@@ -1453,7 +1582,9 @@ async def detect_subscriptions(
             "last_charge_date": sorted_txns[-1].date.isoformat(),
             "last_charge_amount": abs(sorted_txns[-1].amount),
             "next_expected_date": next_date.isoformat() if next_date else None,
-            "confidence": min(len(txns) / 3, 1.0)  # Higher confidence with more transactions
+            "confidence": round(confidence, 2),
+            "monthly_equivalent": get_monthly_equivalent(avg_amount, cycle),
+            "annual_equivalent": get_annual_equivalent(avg_amount, cycle)
         })
 
     # Sort by confidence and amount
