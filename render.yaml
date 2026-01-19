@@ -1,0 +1,26 @@
+# Render Blueprint
+# Deploy to Render with: https://render.com/deploy
+
+services:
+  - type: web
+    name: finance-tracker
+    env: python
+    buildCommand: |
+      cd frontend && npm install && npm run build
+      cd ../backend && pip install -r requirements.txt
+    startCommand: cd backend && python main.py
+    envVars:
+      - key: PLAID_CLIENT_ID
+        sync: false
+      - key: PLAID_SECRET
+        sync: false
+      - key: PLAID_ENV
+        value: sandbox
+      - key: SECRET_KEY
+        generateValue: true
+      - key: API_PORT
+        value: 10000
+    disk:
+      name: finance-data
+      mountPath: /data
+      sizeGB: 1

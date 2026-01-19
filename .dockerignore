@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+
+# Node modules (will be installed in build)
+frontend/node_modules
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+backend/__pycache__
+
+# Virtual environments
+venv
+.venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+frontend/dist
+
+# Local data (will be mounted as volume)
+data/
+
+# Docs and misc
+*.md
+!README.md
+LICENSE
+.env.example
+
+# Docker files (not needed in image)
+docker-compose*.yml
+Dockerfile*

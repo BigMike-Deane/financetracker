@@ -1,0 +1,137 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #1991eb;
+  --primary-dark: #1474bc;
+  --success: #34c759;
+  --danger: #ff3b30;
+  --warning: #ff9500;
+  --bg-dark: #1c1c1e;
+  --bg-card: #2c2c2e;
+  --text-primary: #ffffff;
+  --text-secondary: #8e8e93;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  height: 100%;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  overflow-y: visible;
+}
+
+#root {
+  min-height: 100%;
+}
+
+/* Safe area padding for notched devices */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2c2c2e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #636366;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8e8e93;
+}
+
+/* Card styles */
+.card {
+  @apply bg-dark-800 rounded-2xl p-4;
+}
+
+/* Amount colors */
+.amount-positive {
+  @apply text-green-400;
+}
+
+.amount-negative {
+  @apply text-red-400;
+}
+
+/* Skeleton loading */
+.skeleton {
+  @apply animate-pulse bg-dark-700 rounded;
+}
+
+/* Pull to refresh indicator */
+.ptr-indicator {
+  @apply fixed top-0 left-0 right-0 flex justify-center py-4 z-50;
+  transition: transform 0.2s ease;
+}
+
+/* Bottom navigation */
+.bottom-nav {
+  @apply fixed bottom-0 left-0 right-0 bg-dark-900/95 backdrop-blur-lg border-t border-dark-700;
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 50;
+}
+
+.nav-item {
+  @apply flex flex-col items-center justify-center py-2 px-4 text-dark-400 transition-colors;
+}
+
+.nav-item.active {
+  @apply text-primary-500;
+}
+
+.nav-item svg {
+  @apply w-6 h-6 mb-1;
+}
+
+.nav-item span {
+  @apply text-xs font-medium;
+}
+
+/* Scrollable container with visible scrollbar */
+.scrollable-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scrollable-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb {
+  background: #636366;
+  border-radius: 3px;
+}
+
+.scrollable-list::-webkit-scrollbar-track {
+  background: #2c2c2e;
+  border-radius: 3px;
+}
