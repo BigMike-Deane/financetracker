@@ -8,9 +8,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, text
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 from pathlib import Path
@@ -127,6 +127,63 @@ app.add_middleware(
 frontend_path = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_path.exists():
     app.mount("/assets", StaticFiles(directory=frontend_path / "assets"), name="assets")
+
+
+# ============== Health Check Endpoint ==============
+
+@app.get("/health")
+async def health_check(db: Session = Depends(get_db)):
+    """Health check endpoint for monitoring"""
+    try:
+        # Test database connection
+        db.execute(text("SELECT 1"))
+        db_status = "healthy"
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+
+    # Get basic stats
+    institution_count = db.query(Institution).filter(Institution.is_active == True).count()
+    account_count = db.query(Account).filter(Account.is_active == True).count()
+
+    # Check for recent sync issues
+    recent_errors = db.query(Institution).filter(
+        Institution.sync_status == "error",
+        Institution.is_active == True
+    ).count()
+
+    return {
+        "status": "healthy" if db_status == "healthy" else "degraded",
+        "database": db_status,
+        "institutions": institution_count,
+        "accounts": account_count,
+        "sync_errors": recent_errors,
+        "version": "1.0.0"
+    }
+
+
+# ============== Standardized Error Helpers ==============
+
+class APIError(Exception):
+    """Custom API error with code and user-friendly message"""
+    def __init__(self, code: str, message: str, details: str = None, status_code: int = 400):
+        self.code = code
+        self.message = message
+        self.details = details
+        self.status_code = status_code
+        super().__init__(message)
+
+
+@app.exception_handler(APIError)
+async def api_error_handler(request, exc: APIError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": True,
+            "code": exc.code,
+            "message": exc.message,
+            "details": exc.details
+        }
+    )
 
 
 # ============== SimpleFIN Setup Endpoints ==============

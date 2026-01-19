@@ -9,6 +9,7 @@ import Subscriptions from './pages/Subscriptions'
 import Settings from './pages/Settings'
 import Login from './components/Login'
 import ErrorBoundary from './components/ErrorBoundary'
+import { ToastProvider } from './components/Toast'
 import { hasAuthCredentials, clearAuthCredentials } from './api'
 
 // Icons
@@ -158,7 +159,9 @@ function AppContent() {
 function App() {
   return (
     <ErrorBoundary>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </ErrorBoundary>
   )
 }

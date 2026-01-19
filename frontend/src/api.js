@@ -36,6 +36,32 @@ export function hasAuthCredentials() {
   return authCredentials !== null
 }
 
+// Custom error class for API errors
+export class APIError extends Error {
+  constructor(message, code = 'UNKNOWN_ERROR', details = null, status = 500) {
+    super(message)
+    this.name = 'APIError'
+    this.code = code
+    this.details = details
+    this.status = status
+  }
+}
+
+// User-friendly error messages
+const ERROR_MESSAGES = {
+  AUTH_REQUIRED: 'Please log in to continue',
+  NETWORK_ERROR: 'Unable to connect to server. Check your internet connection.',
+  SERVER_ERROR: 'Something went wrong on our end. Please try again.',
+  NOT_FOUND: 'The requested resource was not found',
+  VALIDATION_ERROR: 'Please check your input and try again',
+  SYNC_ERROR: 'Failed to sync with your bank. Please try again later.',
+  RATE_LIMITED: 'Too many requests. Please wait a moment.',
+}
+
+function getUserFriendlyMessage(code, fallback) {
+  return ERROR_MESSAGES[code] || fallback || 'An unexpected error occurred'
+}
+
 async function fetchAPI(endpoint, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -48,20 +74,39 @@ async function fetchAPI(endpoint, options = {}) {
     headers['Authorization'] = `Basic ${credentials}`
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers,
-    ...options,
-  })
+  let response
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      headers,
+      ...options,
+    })
+  } catch (err) {
+    // Network error (no response)
+    throw new APIError(
+      getUserFriendlyMessage('NETWORK_ERROR'),
+      'NETWORK_ERROR',
+      err.message,
+      0
+    )
+  }
 
   // Handle 401 Unauthorized - clear credentials and throw specific error
   if (response.status === 401) {
     clearAuthCredentials()
-    throw new Error('AUTH_REQUIRED')
+    throw new APIError(
+      getUserFriendlyMessage('AUTH_REQUIRED'),
+      'AUTH_REQUIRED',
+      null,
+      401
+    )
   }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(error.detail || 'Request failed')
+    const errorData = await response.json().catch(() => ({}))
+    const code = errorData.code || (response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED')
+    const message = errorData.message || errorData.detail || getUserFriendlyMessage(code)
+
+    throw new APIError(message, code, errorData.details, response.status)
   }
 
   return response.json()

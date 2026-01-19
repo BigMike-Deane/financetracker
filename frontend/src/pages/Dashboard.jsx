@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { api, formatCurrency, formatPercent } from '../api'
+import { api, formatCurrency, formatPercent, APIError } from '../api'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import PullToRefresh from '../components/PullToRefresh'
+import { useToast } from '../components/Toast'
 
 function NetWorthCard({ data, history }) {
   const isPositive = data.change >= 0
@@ -73,15 +74,19 @@ function AccountsList({ accounts }) {
   if (accountTypes.length === 0) {
     return (
       <div className="card mb-4">
-        <div className="text-dark-400 text-center py-4">
-          No accounts connected
+        <div className="text-center py-4">
+          <div className="text-3xl mb-3">🏦</div>
+          <div className="font-semibold mb-1">Connect Your Accounts</div>
+          <div className="text-dark-400 text-sm mb-4">
+            Link your bank accounts through SimpleFIN to start tracking your finances automatically.
+          </div>
+          <Link
+            to="/settings"
+            className="inline-block px-6 py-3 bg-primary-500 hover:bg-primary-600 rounded-xl font-semibold transition-colors"
+          >
+            Get Started
+          </Link>
         </div>
-        <Link
-          to="/settings"
-          className="block w-full text-center py-3 bg-primary-500 rounded-xl font-semibold"
-        >
-          Connect Account
-        </Link>
       </div>
     )
   }
@@ -285,6 +290,7 @@ export default function Dashboard() {
   const [transactions, setTransactions] = useState([])
   const [institutions, setInstitutions] = useState([])
   const [syncing, setSyncing] = useState(false)
+  const toast = useToast()
 
   const fetchData = async () => {
     try {
@@ -301,6 +307,11 @@ export default function Dashboard() {
       setInstitutions(instData)
       setError(null)
     } catch (err) {
+      if (err instanceof APIError) {
+        toast.showAPIError(err)
+      } else {
+        toast.showError(err.message || 'Failed to load data')
+      }
       setError(err.message)
     } finally {
       setLoading(false)
@@ -316,8 +327,13 @@ export default function Dashboard() {
     try {
       await api.syncAll()
       await fetchData()
+      toast.showSuccess('Accounts synced successfully')
     } catch (err) {
-      setError(err.message)
+      if (err instanceof APIError) {
+        toast.showAPIError(err)
+      } else {
+        toast.showError(err.message || 'Sync failed')
+      }
     } finally {
       setSyncing(false)
     }

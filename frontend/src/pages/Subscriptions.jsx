@@ -196,24 +196,55 @@ function AddSubscriptionModal({ onClose, onAdd }) {
   const [amount, setAmount] = useState('')
   const [billingCycle, setBillingCycle] = useState('monthly')
   const [loading, setLoading] = useState(false)
+  const [errors, setErrors] = useState({})
+  const [submitError, setSubmitError] = useState(null)
+
+  const validate = () => {
+    const newErrors = {}
+
+    if (!name.trim()) {
+      newErrors.name = 'Name is required'
+    } else if (name.trim().length < 2) {
+      newErrors.name = 'Name must be at least 2 characters'
+    }
+
+    if (!amount) {
+      newErrors.amount = 'Amount is required'
+    } else if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      newErrors.amount = 'Please enter a valid amount greater than 0'
+    } else if (parseFloat(amount) > 10000) {
+      newErrors.amount = 'Amount seems too high. Please verify.'
+    }
+
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!name || !amount) return
+    setSubmitError(null)
+
+    if (!validate()) return
 
     setLoading(true)
     try {
       await onAdd({
-        name,
-        merchant_pattern: merchantPattern || name.toLowerCase(),
+        name: name.trim(),
+        merchant_pattern: merchantPattern.trim() || name.toLowerCase().trim(),
         expected_amount: parseFloat(amount),
         billing_cycle: billingCycle
       })
       onClose()
     } catch (err) {
-      console.error('Failed to add subscription:', err)
+      setSubmitError(err.message || 'Failed to add subscription. Please try again.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const clearError = (field) => {
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: null }))
     }
   }
 
@@ -233,16 +264,24 @@ function AddSubscriptionModal({ onClose, onAdd }) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
+          {submitError && (
+            <div className="p-3 bg-red-900/30 border border-red-500/30 rounded-xl text-red-400 text-sm">
+              {submitError}
+            </div>
+          )}
+
           <div>
             <label className="block text-dark-400 text-sm mb-1">Name</label>
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); clearError('name') }}
               placeholder="Netflix, Spotify, etc."
-              className="w-full px-4 py-3 bg-dark-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-              required
+              className={`w-full px-4 py-3 bg-dark-700 rounded-xl focus:outline-none focus:ring-2 ${errors.name ? 'ring-2 ring-red-500' : 'focus:ring-primary-500'}`}
             />
+            {errors.name && (
+              <div className="text-red-400 text-xs mt-1">{errors.name}</div>
+            )}
           </div>
 
           <div>
@@ -250,12 +289,15 @@ function AddSubscriptionModal({ onClose, onAdd }) {
             <input
               type="number"
               step="0.01"
+              min="0"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => { setAmount(e.target.value); clearError('amount') }}
               placeholder="15.99"
-              className="w-full px-4 py-3 bg-dark-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-              required
+              className={`w-full px-4 py-3 bg-dark-700 rounded-xl focus:outline-none focus:ring-2 ${errors.amount ? 'ring-2 ring-red-500' : 'focus:ring-primary-500'}`}
             />
+            {errors.amount && (
+              <div className="text-red-400 text-xs mt-1">{errors.amount}</div>
+            )}
           </div>
 
           <div>

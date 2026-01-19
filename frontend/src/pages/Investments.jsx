@@ -297,10 +297,19 @@ export default function Investments() {
         <h1 className="text-xl font-bold mb-4">Investments</h1>
         <div className="card text-center py-8">
           <div className="text-4xl mb-3">📈</div>
-          <div className="text-dark-400 mb-2">No investment accounts found</div>
-          <div className="text-dark-500 text-sm">
-            Connect a brokerage or retirement account to track your investments
+          <div className="font-semibold mb-2">No Investment Accounts Yet</div>
+          <div className="text-dark-400 text-sm mb-4 px-4">
+            Connect your brokerage, 401(k), or IRA accounts to track your portfolio performance over time.
           </div>
+          <div className="text-dark-500 text-xs mb-4">
+            Supported: Fidelity, Vanguard, Schwab, and 10,000+ other institutions via SimpleFIN
+          </div>
+          <a
+            href="/settings"
+            className="inline-block px-6 py-3 bg-primary-500 hover:bg-primary-600 rounded-xl font-semibold transition-colors"
+          >
+            Connect Investment Account
+          </a>
         </div>
       </div>
     )
