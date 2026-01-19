@@ -3,8 +3,9 @@ import { api, formatCurrency, formatPercent } from '../api'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, PieChart, Pie, Cell } from 'recharts'
 import PullToRefresh from '../components/PullToRefresh'
 
-function PortfolioCard({ summary, history }) {
-  const isPositive = (summary.total_gain_loss || 0) >= 0
+function PortfolioCard({ summary, history, periodLabel }) {
+  const hasChange = summary.total_period_change != null
+  const isPositive = (summary.total_period_change || 0) >= 0
 
   return (
     <div className="card mb-4">
@@ -13,14 +14,14 @@ function PortfolioCard({ summary, history }) {
         {formatCurrency(summary.total_value)}
       </div>
 
-      {summary.total_gain_loss !== null && (
+      {hasChange && (
         <div className={`text-sm flex items-center gap-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-          <span>{isPositive ? '↑' : '↓'}</span>
-          <span>{formatCurrency(summary.total_gain_loss, true)}</span>
-          {summary.total_gain_loss_pct !== null && (
-            <span className="text-dark-500">({formatPercent(summary.total_gain_loss_pct, true)})</span>
+          <span>{isPositive ? '▲' : '▼'}</span>
+          <span>{formatCurrency(summary.total_period_change, true)}</span>
+          {summary.total_period_change_pct != null && (
+            <span>({formatPercent(Math.abs(summary.total_period_change_pct))})</span>
           )}
-          <span className="text-dark-500 ml-1">all time</span>
+          <span className="text-dark-500 ml-1">{periodLabel}</span>
         </div>
       )}
 
@@ -312,23 +313,11 @@ export default function Investments() {
 
         <PeriodSelector selected={historyPeriod} onChange={handlePeriodChange} />
 
-        {historyChange && historyChange.change !== null && (
-          <div className="card mb-4 py-3">
-            <div className="flex justify-between items-center">
-              <span className="text-dark-400 text-sm">
-                {historyPeriod === 30 ? '30 Day' : historyPeriod === 90 ? '90 Day' : historyPeriod === 180 ? '6 Month' : '1 Year'} Change
-              </span>
-              <div className={`font-semibold ${historyChange.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {formatCurrency(historyChange.change, true)}
-                {historyChange.change_pct !== null && (
-                  <span className="ml-1">({formatPercent(historyChange.change_pct, true)})</span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <PortfolioCard summary={summary} history={history} />
+        <PortfolioCard
+          summary={summary}
+          history={history}
+          periodLabel={historyPeriod === 30 ? '30 days' : historyPeriod === 90 ? '90 days' : historyPeriod === 180 ? '6 months' : '1 year'}
+        />
 
         <AccountsBreakdown accounts={summary.by_account} />
 
