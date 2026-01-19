@@ -204,13 +204,16 @@ async def get_institutions(db: Session = Depends(get_db), _auth: bool = Depends(
     """Get all connected institutions"""
     institutions = db.query(Institution).filter(Institution.is_active == True).all()
 
+    now = datetime.utcnow()
     return [{
         "id": inst.id,
         "name": inst.name,
         "logo_url": inst.logo_url,
         "primary_color": inst.primary_color,
         "last_sync": inst.last_sync.isoformat() if inst.last_sync else None,
+        "hours_since_sync": round((now - inst.last_sync).total_seconds() / 3600, 1) if inst.last_sync else None,
         "sync_status": inst.sync_status,
+        "error_message": inst.error_message,
         "accounts_count": len(inst.accounts)
     } for inst in institutions]
 

@@ -209,25 +209,96 @@ function RecentTransactions({ transactions }) {
   )
 }
 
+function ConnectionStatus({ institutions }) {
+  if (!institutions || institutions.length === 0) {
+    return null
+  }
+
+  const getStatusInfo = (inst) => {
+    const isStale = inst.hours_since_sync > 24
+    const isError = inst.sync_status === 'error'
+    const isSuccess = inst.sync_status === 'success' && !isStale
+
+    if (isError) {
+      return { color: 'text-red-400', bg: 'bg-red-500', icon: '!', label: 'Error' }
+    }
+    if (isStale) {
+      return { color: 'text-yellow-400', bg: 'bg-yellow-500', icon: '!', label: 'Stale' }
+    }
+    if (isSuccess) {
+      return { color: 'text-green-400', bg: 'bg-green-500', icon: '✓', label: 'OK' }
+    }
+    return { color: 'text-dark-400', bg: 'bg-dark-500', icon: '?', label: 'Pending' }
+  }
+
+  const formatLastSync = (hours) => {
+    if (hours == null) return 'Never'
+    if (hours < 1) return 'Just now'
+    if (hours < 24) return `${Math.round(hours)}h ago`
+    return `${Math.round(hours / 24)}d ago`
+  }
+
+  return (
+    <div className="card mt-4">
+      <div className="font-semibold mb-3">Connections</div>
+      <div className="space-y-2">
+        {institutions.map(inst => {
+          const status = getStatusInfo(inst)
+          return (
+            <div key={inst.id} className="flex justify-between items-center py-2 border-b border-dark-700 last:border-0">
+              <div className="flex items-center gap-3">
+                <div className={`w-6 h-6 rounded-full ${status.bg} flex items-center justify-center text-xs font-bold text-white`}>
+                  {status.icon}
+                </div>
+                <div>
+                  <div className="font-medium text-sm">{inst.name}</div>
+                  <div className="text-dark-400 text-xs">
+                    {inst.accounts_count} account{inst.accounts_count !== 1 ? 's' : ''}
+                    {' • '}
+                    {formatLastSync(inst.hours_since_sync)}
+                  </div>
+                </div>
+              </div>
+              <div className={`text-xs font-medium ${status.color}`}>
+                {status.label}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {institutions.some(i => i.sync_status === 'error') && (
+        <div className="mt-3 p-2 bg-red-900/30 rounded-lg">
+          <div className="text-red-400 text-xs">
+            {institutions.find(i => i.sync_status === 'error')?.error_message || 'Sync failed - try again or reconnect'}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [data, setData] = useState(null)
   const [history, setHistory] = useState([])
   const [transactions, setTransactions] = useState([])
+  const [institutions, setInstitutions] = useState([])
   const [syncing, setSyncing] = useState(false)
 
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [dashboard, nwHistory, txnData] = await Promise.all([
+      const [dashboard, nwHistory, txnData, instData] = await Promise.all([
         api.getDashboard(),
         api.getNetWorthHistory(30),
-        api.getTransactions({ limit: 5 })
+        api.getTransactions({ limit: 5 }),
+        api.getInstitutions()
       ])
       setData(dashboard)
       setHistory(nwHistory)
       setTransactions(txnData.transactions)
+      setInstitutions(instData)
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -322,6 +393,9 @@ export default function Dashboard() {
 
       {/* Recent Transactions */}
       <RecentTransactions transactions={transactions} />
+
+      {/* Connection Status */}
+      <ConnectionStatus institutions={institutions} />
 
         {/* Bottom spacer for nav clearance */}
         <div className="h-4" />
