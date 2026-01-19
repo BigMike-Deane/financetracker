@@ -125,8 +125,10 @@ export const api = {
     return fetchAPI(`/spending/by-vendor?${params}`)
   },
 
-  // Holdings
+  // Holdings / Investments
   getHoldings: () => fetchAPI('/holdings'),
+  getInvestmentSummary: () => fetchAPI('/investments/summary'),
+  getInvestmentHistory: (days = 90) => fetchAPI(`/investments/history?days=${days}`),
 
   // Categories
   getCategories: () => fetchAPI('/categories'),

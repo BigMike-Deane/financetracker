@@ -1042,6 +1042,132 @@ async def get_holdings(db: Session = Depends(get_db), _auth: bool = Depends(requ
     }
 
 
+@app.get("/api/investments/summary")
+async def get_investment_summary(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
+    """Get comprehensive investment portfolio summary"""
+    # Get all investment accounts
+    investment_accounts = db.query(Account).filter(
+        Account.account_type.in_(INVESTMENT_ACCOUNT_TYPES),
+        Account.is_active == True
+    ).all()
+
+    # Get all holdings
+    holdings = db.query(Holding).join(Account).filter(
+        Account.account_type.in_(INVESTMENT_ACCOUNT_TYPES)
+    ).all()
+
+    # Calculate totals
+    total_value = sum(h.current_value or 0 for h in holdings)
+    total_cost_basis = sum(h.cost_basis or 0 for h in holdings if h.cost_basis)
+    total_gain_loss = total_value - total_cost_basis if total_cost_basis > 0 else None
+    total_gain_loss_pct = (total_gain_loss / total_cost_basis * 100) if total_cost_basis and total_cost_basis > 0 else None
+
+    # Group by account
+    by_account = {}
+    for h in holdings:
+        account_name = h.account.name if h.account else "Unknown"
+        account_type = h.account.account_type.value if h.account else "other"
+        key = f"{h.account_id}"
+        if key not in by_account:
+            by_account[key] = {
+                "account_id": h.account_id,
+                "account_name": account_name,
+                "account_type": account_type,
+                "institution": h.account.institution.name if h.account and h.account.institution else None,
+                "value": 0,
+                "cost_basis": 0,
+                "holdings_count": 0
+            }
+        by_account[key]["value"] += h.current_value or 0
+        by_account[key]["cost_basis"] += h.cost_basis or 0
+        by_account[key]["holdings_count"] += 1
+
+    # Calculate gain/loss for each account
+    accounts_list = []
+    for acc in by_account.values():
+        acc["gain_loss"] = acc["value"] - acc["cost_basis"] if acc["cost_basis"] > 0 else None
+        acc["gain_loss_pct"] = (acc["gain_loss"] / acc["cost_basis"] * 100) if acc["cost_basis"] and acc["cost_basis"] > 0 else None
+        accounts_list.append(acc)
+
+    # Sort by value descending
+    accounts_list.sort(key=lambda x: x["value"], reverse=True)
+
+    # Group by security type
+    by_type = {}
+    for h in holdings:
+        sec_type = h.security_type or "Other"
+        if sec_type not in by_type:
+            by_type[sec_type] = {"type": sec_type, "value": 0, "count": 0}
+        by_type[sec_type]["value"] += h.current_value or 0
+        by_type[sec_type]["count"] += 1
+
+    types_list = sorted(by_type.values(), key=lambda x: x["value"], reverse=True)
+
+    # Top holdings
+    top_holdings = sorted(holdings, key=lambda h: h.current_value or 0, reverse=True)[:10]
+    top_holdings_list = [{
+        "security_name": h.security_name,
+        "ticker": h.ticker,
+        "value": h.current_value,
+        "cost_basis": h.cost_basis,
+        "gain_loss": (h.current_value - h.cost_basis) if h.cost_basis else None,
+        "gain_loss_pct": ((h.current_value - h.cost_basis) / h.cost_basis * 100) if h.cost_basis and h.cost_basis > 0 else None,
+        "allocation_pct": (h.current_value / total_value * 100) if total_value > 0 else 0
+    } for h in top_holdings]
+
+    return {
+        "total_value": total_value,
+        "total_cost_basis": total_cost_basis,
+        "total_gain_loss": total_gain_loss,
+        "total_gain_loss_pct": total_gain_loss_pct,
+        "accounts_count": len(investment_accounts),
+        "holdings_count": len(holdings),
+        "by_account": accounts_list,
+        "by_type": types_list,
+        "top_holdings": top_holdings_list
+    }
+
+
+@app.get("/api/investments/history")
+async def get_investment_history(
+    days: int = Query(90, le=365),
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """Get historical investment portfolio value for charting"""
+    start_date = date.today() - timedelta(days=days)
+
+    # Get balance history for investment accounts
+    history = db.query(
+        BalanceHistory.date,
+        func.sum(BalanceHistory.balance).label('total_value')
+    ).join(Account).filter(
+        Account.account_type.in_(INVESTMENT_ACCOUNT_TYPES),
+        BalanceHistory.date >= start_date
+    ).group_by(BalanceHistory.date).order_by(BalanceHistory.date).all()
+
+    if not history:
+        return {"history": [], "change": None, "change_pct": None}
+
+    history_list = [{"date": h.date.isoformat(), "value": h.total_value} for h in history]
+
+    # Calculate change over period
+    if len(history_list) >= 2:
+        start_value = history_list[0]["value"]
+        end_value = history_list[-1]["value"]
+        change = end_value - start_value
+        change_pct = (change / start_value * 100) if start_value > 0 else None
+    else:
+        change = None
+        change_pct = None
+
+    return {
+        "history": history_list,
+        "change": change,
+        "change_pct": change_pct
+    }
+
+
 # ============== Transaction Rules Endpoints ==============
 
 @app.get("/api/rules")
