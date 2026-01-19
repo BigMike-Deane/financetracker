@@ -1501,16 +1501,40 @@ async def detect_subscriptions(
             by_merchant[merchant] = []
         by_merchant[merchant].append(txn)
 
-    # Get existing subscriptions to avoid duplicates
-    existing = db.query(Subscription).filter(
-        Subscription.is_dismissed == False
-    ).all()
-    existing_patterns = {sub.merchant_pattern.lower() for sub in existing}
+    # Get ALL subscriptions (confirmed AND dismissed) to avoid duplicates
+    all_subs = db.query(Subscription).all()
+    # Build sets for both confirmed and dismissed patterns
+    existing_patterns = {sub.merchant_pattern.lower() for sub in all_subs if not sub.is_dismissed}
+    dismissed_patterns = {sub.merchant_pattern.lower() for sub in all_subs if sub.is_dismissed}
+    all_excluded_patterns = existing_patterns | dismissed_patterns
+
+    def is_pattern_match(merchant: str, patterns: set) -> bool:
+        """Check if merchant matches any pattern (partial matching)"""
+        merchant_lower = merchant.lower()
+        for pattern in patterns:
+            # Exact match
+            if merchant_lower == pattern:
+                return True
+            # Merchant contains pattern or pattern contains merchant
+            if pattern in merchant_lower or merchant_lower in pattern:
+                return True
+            # Word overlap (for cases like "youtube premium" vs "youtube tv")
+            merchant_words = set(merchant_lower.split())
+            pattern_words = set(pattern.split())
+            # If they share significant words (excluding common words)
+            common_words = {'the', 'inc', 'llc', 'ltd', 'co', 'corp'}
+            shared = (merchant_words & pattern_words) - common_words
+            if shared and len(shared) >= 1:
+                # Check if the shared word is significant (not just "the", etc.)
+                significant_shared = any(len(w) > 3 for w in shared)
+                if significant_shared:
+                    return True
+        return False
 
     detected = []
     for merchant, txns in by_merchant.items():
-        # Skip if already tracked
-        if merchant.lower() in existing_patterns:
+        # Skip if already tracked or dismissed
+        if is_pattern_match(merchant, all_excluded_patterns):
             continue
 
         # Need at least 2 transactions for most cycles, but allow 1 for potential annuals
