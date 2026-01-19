@@ -1043,7 +1043,11 @@ async def get_holdings(db: Session = Depends(get_db), _auth: bool = Depends(requ
 
 
 @app.get("/api/investments/summary")
-async def get_investment_summary(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
+async def get_investment_summary(
+    days: int = Query(90, le=365),
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
     """Get comprehensive investment portfolio summary"""
     # Get all investment accounts
     investment_accounts = db.query(Account).filter(
@@ -1128,29 +1132,54 @@ async def get_investment_summary(db: Session = Depends(get_db), _auth: bool = De
         types_list = []  # No breakdown without holdings
         top_holdings_list = []  # No individual holdings
 
-    # Calculate gain/loss for each account (only if cost basis available)
+    # Get historical balances for period change calculation
+    period_start = date.today() - timedelta(days=days)
+
+    # Get the earliest balance for each account within the period
+    from sqlalchemy import and_
+    start_balances = {}
+    for acc_id in by_account.keys():
+        earliest_balance = db.query(BalanceHistory).filter(
+            BalanceHistory.account_id == int(acc_id),
+            BalanceHistory.date >= period_start
+        ).order_by(BalanceHistory.date.asc()).first()
+
+        if earliest_balance:
+            start_balances[acc_id] = earliest_balance.balance
+
+    # Calculate period change for each account
     accounts_list = []
+    total_period_change = 0
+    total_period_start_value = 0
+
     for acc in by_account.values():
-        if acc["cost_basis"] and acc["cost_basis"] > 0:
-            acc["gain_loss"] = acc["value"] - acc["cost_basis"]
-            acc["gain_loss_pct"] = (acc["gain_loss"] / acc["cost_basis"] * 100)
+        acc_id = str(acc["account_id"])
+        current_value = acc["value"]
+
+        if acc_id in start_balances:
+            start_value = start_balances[acc_id]
+            period_change = current_value - start_value
+            period_change_pct = (period_change / start_value * 100) if start_value != 0 else None
+            acc["period_change"] = round(period_change, 2)
+            acc["period_change_pct"] = round(period_change_pct, 2) if period_change_pct is not None else None
+            total_period_change += period_change
+            total_period_start_value += start_value
         else:
-            acc["gain_loss"] = None
-            acc["gain_loss_pct"] = None
+            acc["period_change"] = None
+            acc["period_change_pct"] = None
+
         accounts_list.append(acc)
 
     # Sort by value descending
     accounts_list.sort(key=lambda x: x["value"], reverse=True)
 
-    # Calculate overall gain/loss
-    total_gain_loss = (total_value - total_cost_basis) if total_cost_basis and total_cost_basis > 0 else None
-    total_gain_loss_pct = (total_gain_loss / total_cost_basis * 100) if total_cost_basis and total_cost_basis > 0 else None
+    # Calculate overall period change
+    total_period_change_pct = (total_period_change / total_period_start_value * 100) if total_period_start_value > 0 else None
 
     return {
         "total_value": total_value,
-        "total_cost_basis": total_cost_basis,
-        "total_gain_loss": total_gain_loss,
-        "total_gain_loss_pct": total_gain_loss_pct,
+        "total_period_change": round(total_period_change, 2) if total_period_start_value > 0 else None,
+        "total_period_change_pct": round(total_period_change_pct, 2) if total_period_change_pct is not None else None,
         "accounts_count": len(investment_accounts),
         "holdings_count": len(holdings),
         "has_holdings": has_holdings,

@@ -127,7 +127,7 @@ export const api = {
 
   // Holdings / Investments
   getHoldings: () => fetchAPI('/holdings'),
-  getInvestmentSummary: () => fetchAPI('/investments/summary'),
+  getInvestmentSummary: (days = 90) => fetchAPI(`/investments/summary?days=${days}`),
   getInvestmentHistory: (days = 90) => fetchAPI(`/investments/history?days=${days}`),
 
   // Categories

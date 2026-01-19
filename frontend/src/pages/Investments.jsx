@@ -51,23 +51,15 @@ function PortfolioCard({ summary, history }) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-dark-700">
-        <div>
-          <div className="text-dark-400 text-xs">Cost Basis</div>
-          <div className="font-semibold">
-            {summary.total_cost_basis ? formatCurrency(summary.total_cost_basis) : 'N/A'}
-          </div>
+      <div className="mt-4 pt-4 border-t border-dark-700">
+        <div className="text-dark-400 text-xs">
+          {summary.holdings_count > 0 ? 'Holdings' : 'Accounts'}
         </div>
-        <div>
-          <div className="text-dark-400 text-xs">
-            {summary.holdings_count > 0 ? 'Holdings' : 'Accounts'}
-          </div>
-          <div className="font-semibold">
-            {summary.holdings_count > 0
-              ? `${summary.holdings_count} positions`
-              : `${summary.accounts_count} accounts`
-            }
-          </div>
+        <div className="font-semibold">
+          {summary.holdings_count > 0
+            ? `${summary.holdings_count} positions`
+            : `${summary.accounts_count} accounts`
+          }
         </div>
       </div>
     </div>
@@ -88,7 +80,8 @@ function AccountsBreakdown({ accounts }) {
       <div className="font-semibold mb-3">By Account</div>
       <div className="space-y-3">
         {accounts.map(acc => {
-          const isPositive = (acc.gain_loss || 0) >= 0
+          const isPositive = (acc.period_change || 0) >= 0
+          const hasChange = acc.period_change !== null && acc.period_change !== undefined
           return (
             <div key={acc.account_id} className="flex justify-between items-center py-2 border-b border-dark-700 last:border-0">
               <div>
@@ -100,9 +93,10 @@ function AccountsBreakdown({ accounts }) {
               </div>
               <div className="text-right">
                 <div className="font-semibold">{formatCurrency(acc.value)}</div>
-                {acc.gain_loss !== null && (
-                  <div className={`text-xs ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-                    {formatCurrency(acc.gain_loss, true)}
+                {hasChange && (
+                  <div className={`text-xs flex items-center justify-end gap-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                    <span>{isPositive ? '▲' : '▼'}</span>
+                    <span>{formatPercent(Math.abs(acc.period_change_pct))}</span>
                   </div>
                 )}
               </div>
@@ -247,7 +241,7 @@ export default function Investments() {
     try {
       setLoading(true)
       const [summaryData, historyData] = await Promise.all([
-        api.getInvestmentSummary(),
+        api.getInvestmentSummary(historyPeriod),
         api.getInvestmentHistory(historyPeriod)
       ])
       setSummary(summaryData)
@@ -270,14 +264,18 @@ export default function Investments() {
   const handlePeriodChange = async (days) => {
     setHistoryPeriod(days)
     try {
-      const historyData = await api.getInvestmentHistory(days)
+      const [summaryData, historyData] = await Promise.all([
+        api.getInvestmentSummary(days),
+        api.getInvestmentHistory(days)
+      ])
+      setSummary(summaryData)
       setHistory(historyData.history || [])
       setHistoryChange({
         change: historyData.change,
         change_pct: historyData.change_pct
       })
     } catch (err) {
-      console.error('Failed to fetch history:', err)
+      console.error('Failed to fetch data:', err)
     }
   }
 
