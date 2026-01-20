@@ -473,34 +473,65 @@ async def get_accounts(
     } for acc in accounts]
 
 
+class AccountUpdateRequest(BaseModel):
+    is_hidden: Optional[bool] = None
+    account_type: Optional[str] = None
+    name: Optional[str] = None
+    current_balance: Optional[float] = None
+
+
 @app.patch("/api/accounts/{account_id}")
 async def update_account(
     account_id: int,
-    is_hidden: Optional[bool] = None,
-    account_type: Optional[str] = None,
-    name: Optional[str] = None,
+    request: AccountUpdateRequest,
     db: Session = Depends(get_db),
     _auth: bool = Depends(require_auth)
 ):
-    """Update account settings (type, name, visibility)"""
+    """Update account settings (type, name, visibility, balance)"""
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    if is_hidden is not None:
-        account.is_hidden = is_hidden
+    if request.is_hidden is not None:
+        account.is_hidden = request.is_hidden
 
-    if account_type is not None:
+    if request.account_type is not None:
         try:
-            account.account_type = AccountType(account_type)
+            account.account_type = AccountType(request.account_type)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid account type: {account_type}")
+            raise HTTPException(status_code=400, detail=f"Invalid account type: {request.account_type}")
 
-    if name is not None:
-        account.name = name
+    if request.name is not None:
+        account.name = request.name
+
+    if request.current_balance is not None:
+        account.current_balance = request.current_balance
+        account.available_balance = request.current_balance
+
+        # Also record in balance history for net worth tracking
+        today = date.today()
+        existing = db.query(BalanceHistory).filter(
+            BalanceHistory.account_id == account_id,
+            BalanceHistory.date == today
+        ).first()
+
+        if existing:
+            existing.balance = request.current_balance
+            existing.available = request.current_balance
+        else:
+            db.add(BalanceHistory(
+                account_id=account_id,
+                date=today,
+                balance=request.current_balance,
+                available=request.current_balance
+            ))
 
     db.commit()
-    return {"message": "Account updated", "account_type": account.account_type.value}
+    return {
+        "message": "Account updated",
+        "account_type": account.account_type.value,
+        "current_balance": account.current_balance
+    }
 
 
 @app.delete("/api/accounts/{account_id}")

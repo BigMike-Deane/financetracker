@@ -1,6 +1,109 @@
 import { useState, useEffect } from 'react'
 import { api, formatCurrency } from '../api'
 
+function EditBalanceModal({ account, onClose, onSave }) {
+  const [balance, setBalance] = useState(Math.abs(account.current_balance || 0).toString())
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const isDebt = ['credit', 'loan', 'mortgage'].includes(account.type)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+
+    try {
+      const numBalance = parseFloat(balance)
+      if (isNaN(numBalance)) {
+        setError('Please enter a valid number')
+        return
+      }
+
+      // For debt accounts, store as negative
+      const finalBalance = isDebt ? -Math.abs(numBalance) : numBalance
+      await api.updateAccount(account.id, { current_balance: finalBalance })
+      onSave(account.id, finalBalance)
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Failed to update balance')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-2xl p-4 max-w-sm w-full">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Update Balance</h2>
+          <button onClick={onClose} className="text-dark-400 hover:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="bg-dark-700 rounded-xl p-3 mb-4">
+          <div className="font-medium">{account.name}</div>
+          <div className="text-dark-400 text-sm">{account.institution_name}</div>
+          <div className="text-dark-500 text-xs mt-1">
+            Current: {formatCurrency(account.current_balance)}
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label className="text-dark-400 text-sm block mb-2">
+              {isDebt ? 'Amount Owed' : 'Current Balance'}
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400">$</span>
+              <input
+                type="number"
+                step="0.01"
+                value={balance}
+                onChange={(e) => setBalance(e.target.value)}
+                className="w-full pl-8 pr-4 py-3 bg-dark-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="0.00"
+                autoFocus
+              />
+            </div>
+            {isDebt && (
+              <div className="text-dark-500 text-xs mt-1">
+                Enter as positive number (e.g., 500 for $500 owed)
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 bg-dark-700 rounded-xl font-medium hover:bg-dark-600 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 py-3 bg-primary-500 rounded-xl font-medium hover:bg-primary-600 transition-colors disabled:opacity-50"
+            >
+              {loading ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 const typeConfig = {
   checking: { icon: '🏦', label: 'Checking', color: 'text-blue-400' },
   savings: { icon: '💰', label: 'Savings', color: 'text-green-400' },
@@ -13,7 +116,7 @@ const typeConfig = {
   other: { icon: '💵', label: 'Other', color: 'text-gray-400' },
 }
 
-function AccountCard({ account, onToggleHidden }) {
+function AccountCard({ account, onToggleHidden, onEditBalance }) {
   const config = typeConfig[account.type] || typeConfig.other
   const isDebt = ['credit', 'loan', 'mortgage'].includes(account.type)
 
@@ -45,7 +148,13 @@ function AccountCard({ account, onToggleHidden }) {
         </div>
       </div>
 
-      <div className="mt-3 pt-3 border-t border-dark-700 flex justify-end">
+      <div className="mt-3 pt-3 border-t border-dark-700 flex justify-end gap-3">
+        <button
+          onClick={() => onEditBalance(account)}
+          className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+        >
+          Edit Balance
+        </button>
         <button
           onClick={() => onToggleHidden(account.id, !account.is_hidden)}
           className="text-sm text-dark-400 hover:text-white transition-colors"
@@ -62,6 +171,7 @@ export default function Accounts() {
   const [accounts, setAccounts] = useState([])
   const [institutions, setInstitutions] = useState([])
   const [showHidden, setShowHidden] = useState(false)
+  const [editingAccount, setEditingAccount] = useState(null)
 
   const fetchData = async () => {
     try {
@@ -92,6 +202,12 @@ export default function Accounts() {
     } catch (err) {
       console.error(err)
     }
+  }
+
+  const handleBalanceUpdate = (accountId, newBalance) => {
+    setAccounts(prev =>
+      prev.map(a => a.id === accountId ? { ...a, current_balance: newBalance, available_balance: newBalance } : a)
+    )
   }
 
   const filteredAccounts = showHidden
@@ -144,6 +260,16 @@ export default function Accounts() {
   }
 
   return (
+    <>
+      {/* Edit Balance Modal */}
+      {editingAccount && (
+        <EditBalanceModal
+          account={editingAccount}
+          onClose={() => setEditingAccount(null)}
+          onSave={handleBalanceUpdate}
+        />
+      )}
+
     <div className="p-4">
       <h1 className="text-xl font-bold mb-4">Accounts</h1>
 
@@ -235,6 +361,7 @@ export default function Accounts() {
               key={account.id}
               account={account}
               onToggleHidden={handleToggleHidden}
+              onEditBalance={setEditingAccount}
             />
           ))}
         </div>
@@ -253,5 +380,6 @@ export default function Accounts() {
       {/* Bottom spacer for nav clearance */}
       <div className="h-4" />
     </div>
+    </>
   )
 }
