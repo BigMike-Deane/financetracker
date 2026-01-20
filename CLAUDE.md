@@ -76,14 +76,27 @@ A personal finance management application that integrates with SimpleFIN to auto
 ### Duplicate Transaction Detection
 - Finds transactions with same absolute amount within 3 days
 - Groups by different accounts (cross-account duplicates)
-- Common case: credit card payment on both checking and credit card
-- One-click exclude/include for handling duplicates
+- **Excludes transfer-type transactions** (credit card payments, investment transfers)
+- "Not a Duplicate" button - confirms transaction should be counted
+- "Dismiss Group" button - marks all in group as not duplicates
+- Confirmed non-duplicates won't appear in future scans
 
 ### Transaction Split Feature
 - Split one transaction into multiple parts
 - Assign different categories to each split
 - Original transaction marked as excluded
 - New manual transactions created for splits
+
+### Activity Page Enhancements
+- **Date range filter** - filter transactions by start/end date
+- **Pending count badge** - shows number of pending transactions on toggle button
+- **Pending transactions sorted to top** - when "Show Pending" enabled, pending appear first
+
+### Manual Balance Entry
+- **Edit Balance button** on each account card (Accounts page)
+- Manually update balances when bank sync is broken (e.g., Fidelity/SimpleFIN issues)
+- Updates both Account and BalanceHistory for accurate net worth tracking
+- Debt-aware input (shows "Amount Owed" for credit cards/loans)
 
 ## Database Models (SQLAlchemy)
 
@@ -106,6 +119,7 @@ A personal finance management application that integrates with SimpleFIN to auto
 - `POST /api/setup-simplefin` - Claim SimpleFIN setup token
 - `GET /api/institutions` - List linked institutions
 - `GET /api/accounts` - List accounts with balances
+- `PATCH /api/accounts/{id}` - Update account (name, type, visibility, **balance**)
 - `DELETE /api/accounts/{id}` - Remove account
 
 ### Sync
@@ -227,6 +241,9 @@ cd /opt/finance-tracker && docker-compose up -d
 - Check institution credentials in Settings
 - Try manual sync via API
 - Check logs for SimpleFIN API errors
+- **Note**: SimpleFIN has no API for reconnecting institutions - must use their web portal
+- **Fidelity known issues**: Fidelity frequently breaks with aggregators (security measures)
+- **Workaround**: Use manual balance entry on Accounts page while sync is broken
 
 ### Frontend changes not appearing
 ```bash
