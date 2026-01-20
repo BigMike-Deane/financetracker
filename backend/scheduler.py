@@ -11,7 +11,7 @@ import logging
 import os
 
 from database import SessionLocal
-from sync_service import sync_all_institutions, SimpleFINSyncService
+from sync_service import sync_all_institutions, quick_sync_all_institutions, SimpleFINSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,33 @@ TIMEZONE = os.getenv("TZ", None)  # e.g., "America/Chicago", "America/New_York"
 scheduler = BackgroundScheduler(timezone=TIMEZONE) if TIMEZONE else BackgroundScheduler()
 
 
+def quick_sync_job():
+    """Job that runs hourly to update balances only (fast)"""
+    logger.info(f"Starting quick sync at {datetime.now()}")
+
+    db = SessionLocal()
+    try:
+        results = quick_sync_all_institutions(db)
+
+        # Log results
+        total_accounts = sum(r.get('accounts_synced', 0) for r in results if 'accounts_synced' in r)
+        errors = [r for r in results if 'error' in r]
+
+        if errors:
+            for err in errors:
+                logger.error(f"Quick sync failed for {err.get('institution', 'unknown')}: {err['error']}")
+
+        logger.info(f"Quick sync complete: {total_accounts} accounts updated, {len(errors)} errors")
+
+    except Exception as e:
+        logger.error(f"Quick sync failed: {e}")
+    finally:
+        db.close()
+
+
 def daily_sync_job():
-    """Job that runs daily to sync all institutions"""
-    logger.info(f"Starting daily sync at {datetime.now()}")
+    """Job that runs to sync all institutions including transactions"""
+    logger.info(f"Starting full sync at {datetime.now()}")
 
     db = SessionLocal()
     try:
@@ -55,7 +79,7 @@ def daily_sync_job():
 
 def start_scheduler():
     """Start the background scheduler"""
-    # Run sync daily at 6 AM
+    # Run full sync daily at 6 AM
     scheduler.add_job(
         daily_sync_job,
         CronTrigger(hour=6, minute=0),
@@ -64,17 +88,27 @@ def start_scheduler():
         replace_existing=True
     )
 
-    # Also run every 4 hours for more frequent updates
+    # Full sync every 4 hours (transactions + balances)
     scheduler.add_job(
         daily_sync_job,
         CronTrigger(hour="*/4"),
         id="periodic_sync",
-        name="Periodic Financial Sync",
+        name="Periodic Financial Sync (Full)",
+        replace_existing=True
+    )
+
+    # Quick sync every hour (balances only - fast)
+    # Runs at minutes 30 to offset from full syncs at the top of the hour
+    scheduler.add_job(
+        quick_sync_job,
+        CronTrigger(minute=30),
+        id="quick_sync",
+        name="Hourly Balance Update (Quick)",
         replace_existing=True
     )
 
     scheduler.start()
-    logger.info("Scheduler started - syncing daily at 6 AM and every 4 hours")
+    logger.info("Scheduler started - full sync every 4h, quick sync every hour")
 
 
 def stop_scheduler():
