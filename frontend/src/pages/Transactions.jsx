@@ -9,6 +9,7 @@ export default function Transactions() {
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
   const [activeTab, setActiveTab] = useState('spending') // 'spending' or 'investment'
+  const [includePending, setIncludePending] = useState(false)
   const limit = 50
 
   const fetchTransactions = async (reset = false) => {
@@ -19,7 +20,8 @@ export default function Transactions() {
         limit,
         offset: newOffset,
         search: search || undefined,
-        account_type: activeTab // Filter by spending or investment
+        account_type: activeTab, // Filter by spending or investment
+        include_pending: includePending
       })
       setTransactions(reset ? data.transactions : [...transactions, ...data.transactions])
       setTotal(data.total)
@@ -33,7 +35,7 @@ export default function Transactions() {
 
   useEffect(() => {
     fetchTransactions(true)
-  }, [search, activeTab])
+  }, [search, activeTab, includePending])
 
   const handleSearch = (e) => {
     setSearch(e.target.value)
@@ -118,9 +120,21 @@ export default function Transactions() {
         />
       </div>
 
-      {/* Results count */}
-      <div className="text-dark-400 text-sm mb-4">
-        {total} {activeTab === 'spending' ? 'transactions' : 'investment transactions'}
+      {/* Results count and pending toggle */}
+      <div className="flex justify-between items-center text-sm mb-4">
+        <div className="text-dark-400">
+          {total} {activeTab === 'spending' ? 'transactions' : 'investment transactions'}
+        </div>
+        <button
+          onClick={() => setIncludePending(!includePending)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            includePending
+              ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+              : 'bg-dark-700 text-dark-400 hover:bg-dark-600'
+          }`}
+        >
+          {includePending ? '⏳ Showing Pending' : 'Show Pending'}
+        </button>
       </div>
 
       {/* Transactions by date */}
@@ -141,15 +155,20 @@ export default function Transactions() {
             {txns.map(txn => (
               <div
                 key={txn.id}
-                className="card flex justify-between items-center py-3"
+                className={`card flex justify-between items-center py-3 ${txn.is_pending ? 'border border-yellow-500/30 bg-yellow-500/5' : ''}`}
               >
                 <div className="flex items-center gap-3">
                   <span className="text-2xl">
                     {activeTab === 'investment' ? '📊' : txn.category_emoji}
                   </span>
                   <div>
-                    <div className="font-medium">
+                    <div className="font-medium flex items-center gap-2">
                       {txn.merchant_name || txn.name}
+                      {txn.is_pending && (
+                        <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">
+                          Pending
+                        </span>
+                      )}
                     </div>
                     <div className="text-dark-400 text-xs">
                       {activeTab === 'investment'

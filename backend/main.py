@@ -287,6 +287,62 @@ async def remove_institution(institution_id: int, db: Session = Depends(get_db),
     return {"message": "Institution removed"}
 
 
+@app.get("/api/sync/debug")
+async def sync_debug(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
+    """Debug endpoint to check transaction data state"""
+    from sqlalchemy import func
+
+    # Total transactions
+    total = db.query(Transaction).count()
+    pending = db.query(Transaction).filter(Transaction.is_pending == True).count()
+    posted = db.query(Transaction).filter(Transaction.is_pending == False).count()
+
+    # Date range of posted transactions
+    latest_posted = db.query(func.max(Transaction.date)).filter(Transaction.is_pending == False).scalar()
+    earliest_posted = db.query(func.min(Transaction.date)).filter(Transaction.is_pending == False).scalar()
+
+    # Date range of pending transactions
+    latest_pending = db.query(func.max(Transaction.date)).filter(Transaction.is_pending == True).scalar()
+
+    # Recent pending transactions (last 10)
+    recent_pending = db.query(Transaction).filter(
+        Transaction.is_pending == True
+    ).order_by(desc(Transaction.date)).limit(10).all()
+
+    # Institutions and last sync
+    institutions = db.query(Institution).all()
+
+    return {
+        "transaction_counts": {
+            "total": total,
+            "pending": pending,
+            "posted": posted
+        },
+        "date_ranges": {
+            "posted": {
+                "earliest": earliest_posted.isoformat() if earliest_posted else None,
+                "latest": latest_posted.isoformat() if latest_posted else None
+            },
+            "pending": {
+                "latest": latest_pending.isoformat() if latest_pending else None
+            }
+        },
+        "recent_pending": [{
+            "date": t.date.isoformat() if t.date else None,
+            "name": t.name,
+            "amount": t.amount,
+            "account": t.account.name if t.account else None
+        } for t in recent_pending],
+        "institutions": [{
+            "id": i.id,
+            "name": i.name,
+            "last_sync": i.last_sync.isoformat() if i.last_sync else None,
+            "status": i.sync_status,
+            "error": i.error_message
+        } for i in institutions]
+    }
+
+
 @app.post("/api/sync")
 async def sync_all(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
     """Sync all connected SimpleFIN institutions"""
@@ -439,13 +495,16 @@ async def get_transactions(
     amount_min: Optional[float] = None,
     amount_max: Optional[float] = None,
     exclude_transfers: bool = False,  # Exclude transfer/payment transactions
+    include_pending: bool = False,  # Include pending transactions
     limit: int = Query(100, le=500),
     offset: int = 0,
     db: Session = Depends(get_db),
     _auth: bool = Depends(require_auth)
 ):
     """Get transactions with filtering options"""
-    query = db.query(Transaction).join(Account).filter(Transaction.is_pending == False)
+    query = db.query(Transaction).join(Account)
+    if not include_pending:
+        query = query.filter(Transaction.is_pending == False)
 
     if start_date:
         query = query.filter(Transaction.date >= start_date)
@@ -513,6 +572,7 @@ async def get_transactions(
             "account_name": txn.account.name if txn.account else None,
             "account_type": txn.account.account_type.value if txn.account else None,
             "is_excluded": txn.is_excluded,
+            "is_pending": txn.is_pending,
             "notes": txn.user_notes
         } for txn in transactions]
     }
@@ -654,6 +714,21 @@ async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(req
 
     spending_by_category.sort(key=lambda x: x["amount"], reverse=True)
 
+    # Calculate changes for each bucket
+    def calc_change(current, previous):
+        change = current - previous
+        pct = (change / abs(previous) * 100) if previous != 0 else 0
+        return {"value": current, "change": change, "change_pct": pct}
+
+    cash_curr = latest_nw.cash if latest_nw else 0
+    cash_prev = prev_nw.cash if prev_nw else cash_curr
+    inv_curr = latest_nw.investments if latest_nw else 0
+    inv_prev = prev_nw.investments if prev_nw else inv_curr
+    ret_curr = getattr(latest_nw, 'retirement', 0) if latest_nw else 0
+    ret_prev = getattr(prev_nw, 'retirement', 0) if prev_nw else ret_curr
+    credit_curr = latest_nw.credit_debt if latest_nw else 0
+    credit_prev = prev_nw.credit_debt if prev_nw else credit_curr
+
     return {
         "net_worth": {
             "current": latest_nw.net_worth if latest_nw else 0,
@@ -661,10 +736,18 @@ async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(req
             "change_pct": nw_change_pct,
             "as_of": latest_nw.date.isoformat() if latest_nw else None,
             "breakdown": {
-                "cash": latest_nw.cash if latest_nw else 0,
-                "investments": latest_nw.investments if latest_nw else 0,
-                "retirement": getattr(latest_nw, 'retirement', 0) if latest_nw else 0,
-                "credit_debt": latest_nw.credit_debt if latest_nw else 0,
+                "cash": cash_curr,
+                "cash_change": cash_curr - cash_prev,
+                "cash_change_pct": ((cash_curr - cash_prev) / abs(cash_prev) * 100) if cash_prev != 0 else 0,
+                "investments": inv_curr,
+                "investments_change": inv_curr - inv_prev,
+                "investments_change_pct": ((inv_curr - inv_prev) / abs(inv_prev) * 100) if inv_prev != 0 else 0,
+                "retirement": ret_curr,
+                "retirement_change": ret_curr - ret_prev,
+                "retirement_change_pct": ((ret_curr - ret_prev) / abs(ret_prev) * 100) if ret_prev != 0 else 0,
+                "credit_debt": credit_curr,
+                "credit_change": credit_curr - credit_prev,
+                "credit_change_pct": ((credit_curr - credit_prev) / abs(credit_prev) * 100) if credit_prev != 0 else 0,
                 "loan_debt": latest_nw.loan_debt if latest_nw else 0
             }
         },

@@ -48,20 +48,40 @@ function NetWorthCard({ data, history }) {
         <div>
           <div className="text-dark-400 text-xs">Cash</div>
           <div className="font-semibold">{formatCurrency(data.breakdown?.cash || 0)}</div>
+          {data.breakdown?.cash_change !== 0 && (
+            <div className={`text-xs ${data.breakdown?.cash_change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {data.breakdown?.cash_change >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(data.breakdown?.cash_change_pct || 0))}
+            </div>
+          )}
         </div>
         <div>
           <div className="text-dark-400 text-xs">Investments</div>
           <div className="font-semibold">{formatCurrency(data.breakdown?.investments || 0)}</div>
+          {data.breakdown?.investments_change !== 0 && (
+            <div className={`text-xs ${data.breakdown?.investments_change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {data.breakdown?.investments_change >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(data.breakdown?.investments_change_pct || 0))}
+            </div>
+          )}
         </div>
         <div>
           <div className="text-dark-400 text-xs">Retirement</div>
           <div className="font-semibold">{formatCurrency(data.breakdown?.retirement || 0)}</div>
+          {data.breakdown?.retirement_change !== 0 && (
+            <div className={`text-xs ${data.breakdown?.retirement_change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {data.breakdown?.retirement_change >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(data.breakdown?.retirement_change_pct || 0))}
+            </div>
+          )}
         </div>
         <div>
           <div className="text-dark-400 text-xs">Credit Cards</div>
           <div className="font-semibold text-red-400">
             {formatCurrency(data.breakdown?.credit_debt || 0)}
           </div>
+          {data.breakdown?.credit_change !== 0 && (
+            <div className={`text-xs ${data.breakdown?.credit_change <= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {data.breakdown?.credit_change <= 0 ? '↓' : '↑'} {formatPercent(Math.abs(data.breakdown?.credit_change_pct || 0))}
+            </div>
+          )}
         </div>
       </div>
     </div>

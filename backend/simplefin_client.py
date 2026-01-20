@@ -23,7 +23,8 @@ class SimpleFINClient:
     """Client for SimpleFIN Bridge API"""
 
     def __init__(self):
-        self.timeout = 30.0
+        self.timeout = 120.0  # 2 minutes - SimpleFIN can be slow
+        self.max_retries = 3
 
     def claim_setup_token(self, setup_token: str) -> str:
         """
@@ -87,36 +88,55 @@ class SimpleFINClient:
         Returns:
             Dict with 'accounts' list and optional 'errors' list
         """
-        try:
-            # Build the accounts endpoint URL
-            # Access URL format: https://user:pass@host/simplefin
-            accounts_url = f"{access_url}/accounts"
+        import time
 
-            # Build query parameters
-            params = {}
-            if start_date:
-                params['start-date'] = int(start_date.timestamp())
-            if end_date:
-                params['end-date'] = int(end_date.timestamp())
-            if include_pending:
-                params['pending'] = '1'
+        # Build the accounts endpoint URL
+        # Access URL format: https://user:pass@host/simplefin
+        accounts_url = f"{access_url}/accounts"
 
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.get(accounts_url, params=params)
+        # Build query parameters
+        params = {}
+        if start_date:
+            params['start-date'] = int(start_date.timestamp())
+        if end_date:
+            params['end-date'] = int(end_date.timestamp())
+        if include_pending:
+            params['pending'] = '1'
 
-                if response.status_code == 403:
-                    raise Exception("Access denied - invalid credentials")
-                elif response.status_code == 402:
-                    raise Exception("SimpleFIN subscription expired")
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                if attempt > 0:
+                    wait_time = 5 * (2 ** (attempt - 1))  # 5s, 10s, 20s
+                    logger.info(f"Retry attempt {attempt + 1}/{self.max_retries} after {wait_time}s wait...")
+                    time.sleep(wait_time)
 
-                response.raise_for_status()
+                with httpx.Client(timeout=self.timeout) as client:
+                    logger.info(f"Fetching SimpleFIN accounts (attempt {attempt + 1}/{self.max_retries})...")
+                    response = client.get(accounts_url, params=params)
 
-                data = response.json()
-                return self._parse_response(data)
+                    if response.status_code == 403:
+                        raise Exception("Access denied - invalid credentials")
+                    elif response.status_code == 402:
+                        raise Exception("SimpleFIN subscription expired")
 
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch accounts: {e}")
-            raise Exception(f"Failed to fetch accounts: {e}")
+                    response.raise_for_status()
+
+                    data = response.json()
+                    logger.info(f"SimpleFIN returned {len(data.get('accounts', []))} accounts")
+                    return self._parse_response(data)
+
+            except (httpx.TimeoutException, httpx.ReadTimeout) as e:
+                last_error = e
+                logger.warning(f"SimpleFIN timeout on attempt {attempt + 1}: {e}")
+                continue
+            except httpx.HTTPError as e:
+                logger.error(f"Failed to fetch accounts: {e}")
+                raise Exception(f"Failed to fetch accounts: {e}")
+
+        # All retries exhausted
+        logger.error(f"SimpleFIN failed after {self.max_retries} attempts: {last_error}")
+        raise Exception(f"Failed to fetch accounts after {self.max_retries} attempts: timeout")
 
     def get_balances_only(self, access_url: str) -> dict:
         """

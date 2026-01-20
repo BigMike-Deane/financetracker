@@ -84,10 +84,20 @@ class SimpleFINSyncService:
         try:
             # Fetch data from SimpleFIN (last 90 days)
             start_date = datetime.now() - timedelta(days=90)
+            logger.info(f"Requesting SimpleFIN data from {start_date.date()} to now")
             data = simplefin_client.get_accounts(
                 institution.simplefin_access_url,
                 start_date=start_date
             )
+
+            # Log what we received
+            for account in data.get("accounts", []):
+                txns = account.get("transactions", [])
+                if txns:
+                    dates = [t.get("date") for t in txns if t.get("date")]
+                    pending_count = sum(1 for t in txns if t.get("pending"))
+                    logger.info(f"Account '{account.get('name')}': {len(txns)} transactions, "
+                               f"{pending_count} pending, dates: {min(dates) if dates else 'N/A'} to {max(dates) if dates else 'N/A'}")
 
             # Sync the data
             sync_result = self.sync_from_simplefin(institution_id, data)
