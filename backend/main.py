@@ -665,6 +665,86 @@ async def update_transaction(
     return {"message": "Transaction updated"}
 
 
+class SplitItem(BaseModel):
+    amount: float
+    category: str
+    notes: Optional[str] = None
+
+
+class SplitTransactionRequest(BaseModel):
+    splits: List[SplitItem]
+
+
+@app.post("/api/transactions/{transaction_id}/split")
+async def split_transaction(
+    transaction_id: int,
+    request: SplitTransactionRequest,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """
+    Split a transaction into multiple parts with different categories.
+
+    The original transaction is marked as excluded and hidden.
+    New manual transactions are created for each split.
+    Split amounts should sum to the original amount.
+    """
+    txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Validate splits sum to original amount (with small tolerance for rounding)
+    total_split = sum(s.amount for s in request.splits)
+    if abs(total_split - txn.amount) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Split amounts ({total_split:.2f}) must equal original amount ({txn.amount:.2f})"
+        )
+
+    # Validate at least 2 splits
+    if len(request.splits) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 splits")
+
+    # Create new transactions for each split
+    created_ids = []
+    for i, split in enumerate(request.splits):
+        try:
+            category = TransactionCategory(split.category)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid category: {split.category}")
+
+        new_txn = Transaction(
+            account_id=txn.account_id,
+            date=txn.date,
+            authorized_date=txn.authorized_date,
+            name=f"{txn.name} (split {i+1}/{len(request.splits)})",
+            merchant_name=txn.merchant_name,
+            amount=split.amount,
+            currency=txn.currency,
+            category=category,
+            user_category=category,
+            user_notes=split.notes or f"Split from transaction #{txn.id}",
+            is_pending=False,
+            is_manual=True
+        )
+        db.add(new_txn)
+        db.flush()
+        created_ids.append(new_txn.id)
+
+    # Mark original as excluded with note about split
+    txn.is_excluded = True
+    txn.user_notes = f"{txn.user_notes or ''} [Split into transactions: {', '.join(map(str, created_ids))}]".strip()
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Transaction split into {len(request.splits)} parts",
+        "original_id": transaction_id,
+        "new_ids": created_ids
+    }
+
+
 # ============== Net Worth & Dashboard Endpoints ==============
 
 @app.get("/api/dashboard")

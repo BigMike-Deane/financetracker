@@ -186,6 +186,12 @@ export const api = {
   excludeTransaction: (id) => fetchAPI(`/transactions/${id}/exclude`, { method: 'POST' }),
   includeTransaction: (id) => fetchAPI(`/transactions/${id}/include`, { method: 'POST' }),
 
+  // Transaction Split
+  splitTransaction: (id, splits) => fetchAPI(`/transactions/${id}/split`, {
+    method: 'POST',
+    body: JSON.stringify({ splits })
+  }),
+
   // Rules
   getRules: () => fetchAPI('/rules'),
   createRule: (data) => fetchAPI('/rules', { method: 'POST', body: JSON.stringify(data) }),

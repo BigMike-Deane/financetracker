@@ -2,6 +2,199 @@ import { useState, useEffect } from 'react'
 import { api, formatCurrency, formatDate } from '../api'
 import PullToRefresh from '../components/PullToRefresh'
 
+function SplitModal({ transaction, categories, onClose, onSplit }) {
+  const [splits, setSplits] = useState([
+    { amount: Math.abs(transaction.amount) / 2, category: transaction.category || 'uncategorized', notes: '' },
+    { amount: Math.abs(transaction.amount) / 2, category: 'uncategorized', notes: '' }
+  ])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const isExpense = transaction.amount < 0
+  const originalAmount = Math.abs(transaction.amount)
+  const totalSplit = splits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0)
+  const remaining = originalAmount - totalSplit
+  const isValid = Math.abs(remaining) < 0.01 && splits.length >= 2
+
+  const handleSplitChange = (index, field, value) => {
+    const newSplits = [...splits]
+    newSplits[index] = { ...newSplits[index], [field]: value }
+    setSplits(newSplits)
+  }
+
+  const addSplit = () => {
+    setSplits([...splits, { amount: 0, category: 'uncategorized', notes: '' }])
+  }
+
+  const removeSplit = (index) => {
+    if (splits.length > 2) {
+      setSplits(splits.filter((_, i) => i !== index))
+    }
+  }
+
+  const handleSubmit = async () => {
+    if (!isValid) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      // Convert amounts back to negative if expense
+      const splitData = splits.map(s => ({
+        amount: isExpense ? -parseFloat(s.amount) : parseFloat(s.amount),
+        category: s.category,
+        notes: s.notes || null
+      }))
+
+      await api.splitTransaction(transaction.id, splitData)
+      onSplit()
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Failed to split transaction')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Group categories by parent
+  const groupedCategories = categories.reduce((acc, cat) => {
+    if (!acc[cat.parent]) acc[cat.parent] = []
+    acc[cat.parent].push(cat)
+    return acc
+  }, {})
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-2xl p-4 max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Split Transaction</h2>
+          <button onClick={onClose} className="text-dark-400 hover:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Original transaction info */}
+        <div className="bg-dark-700 rounded-xl p-3 mb-4">
+          <div className="font-medium">{transaction.merchant_name || transaction.name}</div>
+          <div className="text-dark-400 text-sm">{transaction.date} • {transaction.account_name}</div>
+          <div className={`text-lg font-bold mt-1 ${isExpense ? '' : 'text-green-400'}`}>
+            {formatCurrency(transaction.amount)}
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Splits */}
+        <div className="space-y-3 mb-4">
+          {splits.map((split, index) => (
+            <div key={index} className="bg-dark-700 rounded-xl p-3">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-medium">Split {index + 1}</span>
+                {splits.length > 2 && (
+                  <button
+                    onClick={() => removeSplit(index)}
+                    className="text-red-400 hover:text-red-300 text-xs"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label className="text-dark-400 text-xs block mb-1">Amount</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={split.amount}
+                    onChange={(e) => handleSplitChange(index, 'amount', e.target.value)}
+                    className="w-full px-3 py-2 bg-dark-600 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-dark-400 text-xs block mb-1">Category</label>
+                  <select
+                    value={split.category}
+                    onChange={(e) => handleSplitChange(index, 'category', e.target.value)}
+                    className="w-full px-3 py-2 bg-dark-600 rounded-lg text-sm focus:outline-none"
+                  >
+                    {Object.entries(groupedCategories).map(([parent, cats]) => (
+                      <optgroup key={parent} label={parent}>
+                        {cats.map(cat => (
+                          <option key={cat.value} value={cat.value}>
+                            {cat.emoji} {cat.display}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <input
+                type="text"
+                placeholder="Notes (optional)"
+                value={split.notes}
+                onChange={(e) => handleSplitChange(index, 'notes', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-600 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Add split button */}
+        <button
+          onClick={addSplit}
+          className="w-full py-2 mb-4 border border-dashed border-dark-600 rounded-xl text-dark-400 text-sm hover:border-primary-500 hover:text-primary-400 transition-colors"
+        >
+          + Add Another Split
+        </button>
+
+        {/* Summary */}
+        <div className="bg-dark-700 rounded-xl p-3 mb-4">
+          <div className="flex justify-between text-sm mb-1">
+            <span className="text-dark-400">Original</span>
+            <span>{formatCurrency(originalAmount)}</span>
+          </div>
+          <div className="flex justify-between text-sm mb-1">
+            <span className="text-dark-400">Split total</span>
+            <span>{formatCurrency(totalSplit)}</span>
+          </div>
+          <div className={`flex justify-between text-sm font-medium ${
+            Math.abs(remaining) < 0.01 ? 'text-green-400' : 'text-red-400'
+          }`}>
+            <span>Remaining</span>
+            <span>{formatCurrency(remaining)}</span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 bg-dark-700 rounded-xl font-medium hover:bg-dark-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!isValid || loading}
+            className="flex-1 py-3 bg-primary-500 rounded-xl font-medium hover:bg-primary-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Splitting...' : 'Split Transaction'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DuplicatesView() {
   const [loading, setLoading] = useState(true)
   const [duplicates, setDuplicates] = useState(null)
@@ -179,6 +372,8 @@ export default function Transactions() {
   const [offset, setOffset] = useState(0)
   const [activeTab, setActiveTab] = useState('spending') // 'spending', 'investment', or 'duplicates'
   const [includePending, setIncludePending] = useState(false)
+  const [categories, setCategories] = useState([])
+  const [splitTransaction, setSplitTransaction] = useState(null)
   const limit = 50
 
   const fetchTransactions = async (reset = false) => {
@@ -201,6 +396,19 @@ export default function Transactions() {
       setLoading(false)
     }
   }
+
+  const fetchCategories = async () => {
+    try {
+      const data = await api.getCategories()
+      setCategories(data)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  useEffect(() => {
+    fetchCategories()
+  }, [])
 
   useEffect(() => {
     fetchTransactions(true)
@@ -248,11 +456,22 @@ export default function Transactions() {
   }
 
   return (
-    <PullToRefresh onRefresh={handleRefresh}>
-      <div className="p-4">
-        <h1 className="text-xl font-bold mb-4">Activity</h1>
+    <>
+      {/* Split Modal */}
+      {splitTransaction && (
+        <SplitModal
+          transaction={splitTransaction}
+          categories={categories}
+          onClose={() => setSplitTransaction(null)}
+          onSplit={() => fetchTransactions(true)}
+        />
+      )}
 
-      {/* Tabs */}
+      <PullToRefresh onRefresh={handleRefresh}>
+        <div className="p-4">
+          <h1 className="text-xl font-bold mb-4">Activity</h1>
+
+        {/* Tabs */}
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => handleTabChange('spending')}
@@ -342,20 +561,20 @@ export default function Transactions() {
                     key={txn.id}
                     className={`card flex justify-between items-center py-3 ${txn.is_pending ? 'border border-yellow-500/30 bg-yellow-500/5' : ''}`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
                       <span className="text-2xl">
                         {activeTab === 'investment' ? '📊' : txn.category_emoji}
                       </span>
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <div className="font-medium flex items-center gap-2">
-                          {txn.merchant_name || txn.name}
+                          <span className="truncate">{txn.merchant_name || txn.name}</span>
                           {txn.is_pending && (
-                            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">
+                            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded flex-shrink-0">
                               Pending
                             </span>
                           )}
                         </div>
-                        <div className="text-dark-400 text-xs">
+                        <div className="text-dark-400 text-xs truncate">
                           {activeTab === 'investment'
                             ? txn.account_name
                             : `${txn.category_display} • ${txn.account_name}`
@@ -363,8 +582,21 @@ export default function Transactions() {
                         </div>
                       </div>
                     </div>
-                    <div className={`font-semibold ${txn.amount > 0 ? 'text-green-400' : ''}`}>
-                      {txn.amount > 0 ? '+' : ''}{formatCurrency(txn.amount)}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className={`font-semibold ${txn.amount > 0 ? 'text-green-400' : ''}`}>
+                        {txn.amount > 0 ? '+' : ''}{formatCurrency(txn.amount)}
+                      </div>
+                      {activeTab === 'spending' && !txn.is_pending && (
+                        <button
+                          onClick={() => setSplitTransaction(txn)}
+                          className="p-1.5 text-dark-400 hover:text-primary-400 hover:bg-dark-700 rounded transition-colors"
+                          title="Split transaction"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -404,9 +636,10 @@ export default function Transactions() {
         </>
       )}
 
-        {/* Bottom spacer for nav clearance */}
-        <div className="h-4" />
-      </div>
-    </PullToRefresh>
+          {/* Bottom spacer for nav clearance */}
+          <div className="h-4" />
+        </div>
+      </PullToRefresh>
+    </>
   )
 }
