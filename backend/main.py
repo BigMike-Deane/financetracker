@@ -670,6 +670,11 @@ async def update_transaction(
 @app.get("/api/dashboard")
 async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
     """Get dashboard summary data"""
+    # Get most recent sync time across all institutions
+    last_sync_result = db.query(func.max(Institution.last_sync)).filter(
+        Institution.is_active == True
+    ).scalar()
+
     # Get latest net worth
     latest_nw = db.query(NetWorthSnapshot).order_by(
         desc(NetWorthSnapshot.date)
@@ -787,6 +792,7 @@ async def get_dashboard(db: Session = Depends(get_db), _auth: bool = Depends(req
     credit_prev = prev_nw.credit_debt if prev_nw else credit_curr
 
     return {
+        "last_sync": last_sync_result.isoformat() if last_sync_result else None,
         "net_worth": {
             "current": latest_nw.net_worth if latest_nw else 0,
             "change": nw_change,

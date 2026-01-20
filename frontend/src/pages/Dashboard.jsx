@@ -302,6 +302,22 @@ function ConnectionStatus({ institutions }) {
   )
 }
 
+function formatRelativeTime(isoString) {
+  if (!isoString) return null
+  const date = new Date(isoString)
+  const now = new Date()
+  const diffMs = now - date
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+
+  if (diffMins < 1) return 'Just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}
+
 export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -396,22 +412,30 @@ export default function Dashboard() {
           <div className="text-dark-400 text-sm">Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}</div>
           <h1 className="text-xl font-bold">Your Finances</h1>
         </div>
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="p-2 rounded-full bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`}
+        <div className="flex items-center gap-2">
+          {data?.last_sync && (
+            <span className="text-dark-500 text-xs">
+              {formatRelativeTime(data.last_sync)}
+            </span>
+          )}
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="p-2 rounded-full bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50"
+            title={data?.last_sync ? `Last synced: ${new Date(data.last_sync).toLocaleString()}` : 'Sync accounts'}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-        </button>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Net Worth */}
