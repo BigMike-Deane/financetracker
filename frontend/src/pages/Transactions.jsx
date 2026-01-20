@@ -252,6 +252,21 @@ function DuplicatesView() {
     }
   }
 
+  const handleDismissGroup = async (group) => {
+    setProcessingId(`group-${group.amount}`)
+    try {
+      // Mark all transactions in group as not duplicates
+      for (const txn of group.transactions) {
+        await api.markNotDuplicate(txn.id)
+      }
+      await fetchDuplicates()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -297,8 +312,18 @@ function DuplicatesView() {
               <div className="font-semibold text-primary-400">
                 {formatCurrency(group.amount)} transactions
               </div>
-              <div className="text-dark-400 text-xs">
-                {group.transactions.length} similar transactions
+              <div className="flex items-center gap-2">
+                <span className="text-dark-400 text-xs">
+                  {group.transactions.length} similar
+                </span>
+                <button
+                  onClick={() => handleDismissGroup(group)}
+                  disabled={processingId === `group-${group.amount}`}
+                  className="px-2 py-1 text-xs rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 disabled:opacity-50"
+                  title="Mark all as not duplicates"
+                >
+                  {processingId === `group-${group.amount}` ? 'Dismissing...' : 'Dismiss Group'}
+                </button>
               </div>
             </div>
 
@@ -326,10 +351,20 @@ function DuplicatesView() {
                       {txn.category_display}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
                     <span className={`font-semibold ${txn.amount > 0 ? 'text-green-400' : ''}`}>
                       {formatCurrency(txn.amount)}
                     </span>
+                    <button
+                      onClick={() => handleMarkNotDuplicate(txn.id)}
+                      disabled={processingId === txn.id}
+                      className="p-1.5 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 disabled:opacity-50"
+                      title="Not a duplicate - keep counting"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </button>
                     {txn.is_excluded ? (
                       <button
                         onClick={() => handleInclude(txn.id)}
@@ -372,8 +407,11 @@ export default function Transactions() {
   const [offset, setOffset] = useState(0)
   const [activeTab, setActiveTab] = useState('spending') // 'spending', 'investment', or 'duplicates'
   const [includePending, setIncludePending] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
   const [categories, setCategories] = useState([])
   const [splitTransaction, setSplitTransaction] = useState(null)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const limit = 50
 
   const fetchTransactions = async (reset = false) => {
@@ -385,7 +423,9 @@ export default function Transactions() {
         offset: newOffset,
         search: search || undefined,
         account_type: activeTab, // Filter by spending or investment
-        include_pending: includePending
+        include_pending: includePending,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined
       })
       setTransactions(reset ? data.transactions : [...transactions, ...data.transactions])
       setTotal(data.total)
@@ -394,6 +434,25 @@ export default function Transactions() {
       console.error(err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Fetch pending count for badge
+  const fetchPendingCount = async () => {
+    try {
+      const data = await api.getTransactions({
+        limit: 1,
+        account_type: activeTab,
+        include_pending: true
+      })
+      const dataWithoutPending = await api.getTransactions({
+        limit: 1,
+        account_type: activeTab,
+        include_pending: false
+      })
+      setPendingCount(data.total - dataWithoutPending.total)
+    } catch (err) {
+      console.error(err)
     }
   }
 
@@ -412,7 +471,13 @@ export default function Transactions() {
 
   useEffect(() => {
     fetchTransactions(true)
-  }, [search, activeTab, includePending])
+  }, [search, activeTab, includePending, startDate, endDate])
+
+  useEffect(() => {
+    if (activeTab !== 'duplicates') {
+      fetchPendingCount()
+    }
+  }, [activeTab])
 
   const handleSearch = (e) => {
     setSearch(e.target.value)
@@ -524,6 +589,37 @@ export default function Transactions() {
             />
           </div>
 
+          {/* Date Range Filter */}
+          <div className="flex gap-2 mb-4">
+            <div className="flex-1">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="From"
+              />
+            </div>
+            <div className="flex-1">
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="To"
+              />
+            </div>
+            {(startDate || endDate) && (
+              <button
+                onClick={() => { setStartDate(''); setEndDate(''); }}
+                className="px-3 py-2 bg-dark-700 rounded-xl text-dark-400 hover:bg-dark-600 text-sm"
+                title="Clear dates"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
           {/* Results count and pending toggle */}
           <div className="flex justify-between items-center text-sm mb-4">
             <div className="text-dark-400">
@@ -531,13 +627,18 @@ export default function Transactions() {
             </div>
             <button
               onClick={() => setIncludePending(!includePending)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${
                 includePending
                   ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
                   : 'bg-dark-700 text-dark-400 hover:bg-dark-600'
               }`}
             >
               {includePending ? '⏳ Showing Pending' : 'Show Pending'}
+              {pendingCount > 0 && !includePending && (
+                <span className="bg-yellow-500 text-black text-xs px-1.5 py-0.5 rounded-full font-bold">
+                  {pendingCount}
+                </span>
+              )}
             </button>
           </div>
 

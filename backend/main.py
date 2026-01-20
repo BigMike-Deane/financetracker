@@ -1324,13 +1324,14 @@ async def find_duplicate_transactions(
         TransactionCategory.INCOME_TRANSFER
     ]
 
-    # Get all transactions in the date range, excluding transfers
+    # Get all transactions in the date range, excluding transfers and confirmed non-duplicates
     transactions = db.query(Transaction).join(Account).filter(
         Transaction.date >= cutoff_date,
         Account.is_active == True,
         Account.is_hidden == False,
         ~Transaction.category.in_(transfer_categories),
-        ~Transaction.user_category.in_(transfer_categories) | (Transaction.user_category == None)
+        ~Transaction.user_category.in_(transfer_categories) | (Transaction.user_category == None),
+        ~Transaction.user_notes.contains("[Not a duplicate]") | (Transaction.user_notes == None)
     ).order_by(Transaction.date.desc()).all()
 
     # Group by amount (use absolute value to match debits/credits)
