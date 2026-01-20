@@ -4,7 +4,7 @@ Database configuration and models for Finance Tracker
 
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Date, Boolean, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Date, Boolean, ForeignKey, Text, Enum as SQLEnum, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 import enum
@@ -158,6 +158,10 @@ class Account(Base):
 class Transaction(Base):
     """Individual transaction"""
     __tablename__ = "transactions"
+    __table_args__ = (
+        Index('ix_transactions_account_date', 'account_id', 'date'),
+        Index('ix_transactions_account_id', 'account_id'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"))
@@ -200,6 +204,9 @@ class Transaction(Base):
 class BalanceHistory(Base):
     """Daily balance snapshots for net worth tracking"""
     __tablename__ = "balance_history"
+    __table_args__ = (
+        Index('ix_balance_history_account_date', 'account_id', 'date'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"))

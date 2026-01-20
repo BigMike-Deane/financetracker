@@ -33,6 +33,26 @@ from scheduler import start_scheduler
 from auth import require_auth
 
 
+# Precompute category list (static data, never changes)
+def _build_category_list():
+    """Build sorted category list once at module load"""
+    skip_categories = {"subscription_software", "subscription_other"}
+    categories = []
+    for cat in TransactionCategory:
+        if cat.value in skip_categories:
+            continue
+        categories.append({
+            "value": cat.value,
+            "display": get_category_display_name(cat),
+            "emoji": get_category_emoji(cat),
+            "parent": get_parent_category(cat)
+        })
+    categories.sort(key=lambda c: (c["parent"], c["display"]))
+    return categories
+
+_CACHED_CATEGORIES = _build_category_list()
+
+
 # Pydantic models for requests
 class SimpleFINSetupRequest(BaseModel):
     setup_token: str
@@ -1175,23 +1195,8 @@ async def get_spending_trends(
 
 @app.get("/api/categories")
 async def get_categories(_auth: bool = Depends(require_auth)):
-    """Get all available transaction categories for dropdowns"""
-    # Skip duplicate subscription categories - only show one "Subscriptions" option
-    skip_categories = {"subscription_software", "subscription_other"}
-
-    categories = []
-    for cat in TransactionCategory:
-        if cat.value in skip_categories:
-            continue
-        categories.append({
-            "value": cat.value,
-            "display": get_category_display_name(cat),
-            "emoji": get_category_emoji(cat),
-            "parent": get_parent_category(cat)
-        })
-    # Sort by parent category, then display name
-    categories.sort(key=lambda c: (c["parent"], c["display"]))
-    return categories
+    """Get all available transaction categories for dropdowns (cached)"""
+    return _CACHED_CATEGORIES
 
 
 # ============== Holdings/Investments Endpoints ==============
