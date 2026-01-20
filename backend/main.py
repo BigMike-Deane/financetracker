@@ -1205,6 +1205,178 @@ async def get_categories(_auth: bool = Depends(require_auth)):
     return _CACHED_CATEGORIES
 
 
+# ============== Duplicate Detection Endpoints ==============
+
+@app.get("/api/transactions/duplicates")
+async def find_duplicate_transactions(
+    days: int = Query(90, le=365, description="Days to look back"),
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """
+    Find potential duplicate transactions across accounts.
+
+    Duplicates are identified by:
+    - Same absolute amount
+    - Dates within 3 days of each other
+    - Optionally similar merchant names
+
+    Common scenarios:
+    - Credit card payment appears on both checking and credit card
+    - Same merchant charged twice
+    """
+    from collections import defaultdict
+
+    cutoff_date = date.today() - timedelta(days=days)
+
+    # Get all transactions in the date range
+    transactions = db.query(Transaction).join(Account).filter(
+        Transaction.date >= cutoff_date,
+        Account.is_active == True,
+        Account.is_hidden == False
+    ).order_by(Transaction.date.desc()).all()
+
+    # Group by amount (use absolute value to match debits/credits)
+    by_amount = defaultdict(list)
+    for txn in transactions:
+        amount_key = round(abs(txn.amount), 2)
+        by_amount[amount_key].append(txn)
+
+    duplicate_groups = []
+
+    for amount, txns in by_amount.items():
+        if len(txns) < 2:
+            continue
+
+        # Within same amount, find transactions within 3 days of each other
+        # but from DIFFERENT accounts (same account duplicates handled by simplefin_id)
+        txns_sorted = sorted(txns, key=lambda t: t.date)
+
+        for i, txn1 in enumerate(txns_sorted):
+            group = [txn1]
+            for txn2 in txns_sorted[i+1:]:
+                # Different accounts
+                if txn1.account_id == txn2.account_id:
+                    continue
+                # Within 3 days
+                day_diff = abs((txn2.date - txn1.date).days)
+                if day_diff <= 3:
+                    # Check if not already in another group
+                    already_grouped = any(
+                        txn2.id in [t["id"] for t in g["transactions"]]
+                        for g in duplicate_groups
+                    )
+                    if not already_grouped:
+                        group.append(txn2)
+
+            if len(group) > 1:
+                # Check if this group overlaps with existing
+                group_ids = {t.id for t in group}
+                existing_group = None
+                for g in duplicate_groups:
+                    existing_ids = {t["id"] for t in g["transactions"]}
+                    if group_ids & existing_ids:
+                        existing_group = g
+                        break
+
+                if existing_group:
+                    # Merge into existing group
+                    existing_ids = {t["id"] for t in existing_group["transactions"]}
+                    for txn in group:
+                        if txn.id not in existing_ids:
+                            existing_group["transactions"].append({
+                                "id": txn.id,
+                                "date": txn.date.isoformat(),
+                                "name": txn.name,
+                                "merchant_name": txn.merchant_name,
+                                "amount": txn.amount,
+                                "account_id": txn.account_id,
+                                "account_name": txn.account.name if txn.account else None,
+                                "category": txn.category.value if txn.category else None,
+                                "category_display": get_category_display_name(txn.category) if txn.category else None,
+                                "is_excluded": txn.is_excluded
+                            })
+                else:
+                    duplicate_groups.append({
+                        "amount": amount,
+                        "transactions": [{
+                            "id": t.id,
+                            "date": t.date.isoformat(),
+                            "name": t.name,
+                            "merchant_name": t.merchant_name,
+                            "amount": t.amount,
+                            "account_id": t.account_id,
+                            "account_name": t.account.name if t.account else None,
+                            "category": t.category.value if t.category else None,
+                            "category_display": get_category_display_name(t.category) if t.category else None,
+                            "is_excluded": t.is_excluded
+                        } for t in group]
+                    })
+
+    # Sort groups by amount (largest first)
+    duplicate_groups.sort(key=lambda g: g["amount"], reverse=True)
+
+    return {
+        "count": len(duplicate_groups),
+        "total_potential_duplicates": sum(len(g["transactions"]) - 1 for g in duplicate_groups),
+        "groups": duplicate_groups
+    }
+
+
+@app.post("/api/transactions/{transaction_id}/mark-not-duplicate")
+async def mark_not_duplicate(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """Mark a transaction as reviewed/not a duplicate by adding a note"""
+    txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Add a note indicating this was reviewed
+    existing_notes = txn.user_notes or ""
+    if "[Not a duplicate]" not in existing_notes:
+        txn.user_notes = f"{existing_notes} [Not a duplicate]".strip()
+        db.commit()
+
+    return {"success": True, "message": "Transaction marked as reviewed"}
+
+
+@app.post("/api/transactions/{transaction_id}/exclude")
+async def exclude_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """Exclude a transaction from budgets/reports (for handling duplicates)"""
+    txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    txn.is_excluded = True
+    db.commit()
+
+    return {"success": True, "message": "Transaction excluded from reports"}
+
+
+@app.post("/api/transactions/{transaction_id}/include")
+async def include_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """Re-include a previously excluded transaction"""
+    txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    txn.is_excluded = False
+    db.commit()
+
+    return {"success": True, "message": "Transaction included in reports"}
+
+
 # ============== Holdings/Investments Endpoints ==============
 
 @app.get("/api/holdings")

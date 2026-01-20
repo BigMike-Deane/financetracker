@@ -180,6 +180,12 @@ export const api = {
   // Categories
   getCategories: () => fetchAPI('/categories'),
 
+  // Duplicate Detection
+  getDuplicates: (days = 90) => fetchAPI(`/transactions/duplicates?days=${days}`),
+  markNotDuplicate: (id) => fetchAPI(`/transactions/${id}/mark-not-duplicate`, { method: 'POST' }),
+  excludeTransaction: (id) => fetchAPI(`/transactions/${id}/exclude`, { method: 'POST' }),
+  includeTransaction: (id) => fetchAPI(`/transactions/${id}/include`, { method: 'POST' }),
+
   // Rules
   getRules: () => fetchAPI('/rules'),
   createRule: (data) => fetchAPI('/rules', { method: 'POST', body: JSON.stringify(data) }),
