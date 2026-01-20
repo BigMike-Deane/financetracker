@@ -611,7 +611,14 @@ async def get_transactions(
 
     total = query.count()
 
-    transactions = query.order_by(desc(Transaction.date)).offset(offset).limit(limit).all()
+    # When including pending, sort them to the top so they're immediately visible
+    if include_pending:
+        transactions = query.order_by(
+            desc(Transaction.is_pending),  # Pending first
+            desc(Transaction.date)
+        ).offset(offset).limit(limit).all()
+    else:
+        transactions = query.order_by(desc(Transaction.date)).offset(offset).limit(limit).all()
 
     return {
         "total": total,
@@ -1309,11 +1316,21 @@ async def find_duplicate_transactions(
 
     cutoff_date = date.today() - timedelta(days=days)
 
-    # Get all transactions in the date range
+    # Exclude transfer-type transactions (credit card payments, transfers between accounts)
+    # These legitimately appear on both accounts with same amount
+    transfer_categories = [
+        TransactionCategory.FINANCIAL_TRANSFER,
+        TransactionCategory.FINANCIAL_INVESTMENT,
+        TransactionCategory.INCOME_TRANSFER
+    ]
+
+    # Get all transactions in the date range, excluding transfers
     transactions = db.query(Transaction).join(Account).filter(
         Transaction.date >= cutoff_date,
         Account.is_active == True,
-        Account.is_hidden == False
+        Account.is_hidden == False,
+        ~Transaction.category.in_(transfer_categories),
+        ~Transaction.user_category.in_(transfer_categories) | (Transaction.user_category == None)
     ).order_by(Transaction.date.desc()).all()
 
     # Group by amount (use absolute value to match debits/credits)
