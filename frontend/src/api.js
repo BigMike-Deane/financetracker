@@ -128,8 +128,10 @@ export const api = {
     }),
 
   // Sync
-  syncAll: () => fetchAPI('/sync', { method: 'POST' }),
-  syncInstitution: (id) => fetchAPI(`/sync/${id}`, { method: 'POST' }),
+  syncAll: (full = false) => fetchAPI(`/sync?full=${full}`, { method: 'POST' }),
+  syncInstitution: (id, full = false) => fetchAPI(`/sync/${id}?full=${full}`, { method: 'POST' }),
+  quickSyncAll: () => fetchAPI('/sync/quick', { method: 'POST' }),
+  quickSyncInstitution: (id) => fetchAPI(`/sync/${id}/quick`, { method: 'POST' }),
 
   // Accounts
   getAccounts: (includeHidden = false) =>

@@ -473,17 +473,48 @@ function RulesManager() {
 
 function InstitutionCard({ institution, onRemove, onSync }) {
   const [syncing, setSyncing] = useState(false)
+  const [syncType, setSyncType] = useState(null) // 'quick' or 'full'
 
-  const handleSync = async () => {
+  const handleQuickSync = async () => {
     setSyncing(true)
+    setSyncType('quick')
     try {
-      await api.syncInstitution(institution.id)
+      await api.quickSyncInstitution(institution.id)
       onSync()
     } catch (err) {
       console.error(err)
     } finally {
       setSyncing(false)
+      setSyncType(null)
     }
+  }
+
+  const handleFullSync = async () => {
+    setSyncing(true)
+    setSyncType('full')
+    try {
+      await api.syncInstitution(institution.id, true)
+      onSync()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSyncing(false)
+      setSyncType(null)
+    }
+  }
+
+  const formatLastSync = (lastSync) => {
+    if (!lastSync) return 'Never synced'
+    const date = new Date(lastSync)
+    const now = new Date()
+    const diffMs = now - date
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    return date.toLocaleDateString()
   }
 
   return (
@@ -508,26 +539,51 @@ function InstitutionCard({ institution, onRemove, onSync }) {
             institution.sync_status === 'error' ? 'bg-red-500' : 'bg-yellow-500'
           }`} />
           <span className="text-dark-400 text-xs">
-            {institution.last_sync
-              ? new Date(institution.last_sync).toLocaleDateString()
-              : 'Never synced'}
+            {formatLastSync(institution.last_sync)}
           </span>
         </div>
       </div>
 
       <div className="flex gap-2 mt-3 pt-3 border-t border-dark-700">
         <button
-          onClick={handleSync}
+          onClick={handleQuickSync}
+          disabled={syncing}
+          className="flex-1 py-2 bg-primary-500/20 text-primary-400 rounded-lg text-sm font-medium hover:bg-primary-500/30 transition-colors disabled:opacity-50"
+          title="Update balances only (~5 seconds)"
+        >
+          {syncing && syncType === 'quick' ? (
+            <span className="flex items-center justify-center gap-1">
+              <svg className="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Quick...
+            </span>
+          ) : 'Quick Sync'}
+        </button>
+        <button
+          onClick={handleFullSync}
           disabled={syncing}
           className="flex-1 py-2 bg-dark-700 rounded-lg text-sm font-medium hover:bg-dark-600 transition-colors disabled:opacity-50"
+          title="Sync balances + transactions"
         >
-          {syncing ? 'Syncing...' : 'Sync Now'}
+          {syncing && syncType === 'full' ? (
+            <span className="flex items-center justify-center gap-1">
+              <svg className="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Full...
+            </span>
+          ) : 'Full Sync'}
         </button>
         <button
           onClick={() => onRemove(institution.id)}
-          className="px-4 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-medium hover:bg-red-500/30 transition-colors"
+          className="px-3 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-medium hover:bg-red-500/30 transition-colors"
         >
-          Remove
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+          </svg>
         </button>
       </div>
     </div>
@@ -539,6 +595,7 @@ export default function Settings({ onLogout }) {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [syncType, setSyncType] = useState(null) // 'quick' or 'full'
   const [successMessage, setSuccessMessage] = useState(null)
 
   const fetchData = async () => {
@@ -578,15 +635,35 @@ export default function Settings({ onLogout }) {
     }
   }
 
-  const handleSyncAll = async () => {
+  const handleQuickSyncAll = async () => {
     setSyncing(true)
+    setSyncType('quick')
     try {
-      await api.syncAll()
+      await api.quickSyncAll()
       await fetchData()
+      setSuccessMessage('Quick sync complete - balances updated!')
+      setTimeout(() => setSuccessMessage(null), 3000)
     } catch (err) {
       console.error(err)
     } finally {
       setSyncing(false)
+      setSyncType(null)
+    }
+  }
+
+  const handleFullSyncAll = async () => {
+    setSyncing(true)
+    setSyncType('full')
+    try {
+      await api.syncAll(true)
+      await fetchData()
+      setSuccessMessage('Full sync complete - balances and transactions updated!')
+      setTimeout(() => setSuccessMessage(null), 3000)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSyncing(false)
+      setSyncType(null)
     }
   }
 
@@ -615,13 +692,40 @@ export default function Settings({ onLogout }) {
         <div className="flex justify-between items-center mb-2">
           <div className="text-dark-400 text-sm">Connected Accounts</div>
           {institutions.length > 0 && (
-            <button
-              onClick={handleSyncAll}
-              disabled={syncing}
-              className="text-sm text-primary-500 disabled:opacity-50"
-            >
-              {syncing ? 'Syncing...' : 'Sync All'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleQuickSyncAll}
+                disabled={syncing}
+                className="text-xs px-2 py-1 bg-primary-500/20 text-primary-400 rounded-lg disabled:opacity-50 hover:bg-primary-500/30 transition-colors"
+                title="Update balances only (~5 seconds)"
+              >
+                {syncing && syncType === 'quick' ? (
+                  <span className="flex items-center gap-1">
+                    <svg className="animate-spin w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Quick...
+                  </span>
+                ) : 'Quick Sync'}
+              </button>
+              <button
+                onClick={handleFullSyncAll}
+                disabled={syncing}
+                className="text-xs px-2 py-1 bg-dark-700 rounded-lg disabled:opacity-50 hover:bg-dark-600 transition-colors"
+                title="Sync balances + transactions"
+              >
+                {syncing && syncType === 'full' ? (
+                  <span className="flex items-center gap-1">
+                    <svg className="animate-spin w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Full...
+                  </span>
+                ) : 'Full Sync'}
+              </button>
+            </div>
           )}
         </div>
 
