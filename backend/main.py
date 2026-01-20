@@ -24,7 +24,7 @@ from database import (
     Subscription
 )
 from simplefin_client import simplefin_client
-from sync_service import SimpleFINSyncService, sync_all_institutions
+from sync_service import SimpleFINSyncService, sync_all_institutions, quick_sync_all_institutions
 from categorizer import (
     categorize_transaction, get_category_display_name, get_category_emoji, get_parent_category
 )
@@ -344,18 +344,55 @@ async def sync_debug(db: Session = Depends(get_db), _auth: bool = Depends(requir
 
 
 @app.post("/api/sync")
-async def sync_all(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
-    """Sync all connected SimpleFIN institutions"""
-    results = sync_all_institutions(db)
+async def sync_all(
+    full: bool = Query(False, description="Force full 90-day sync instead of incremental"),
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """
+    Sync all connected SimpleFIN institutions.
+    Uses incremental sync by default (faster). Add ?full=true for full 90-day history.
+    """
+    results = sync_all_institutions(db, full_sync=full)
+    return {"results": results}
+
+
+@app.post("/api/sync/quick")
+async def quick_sync_all(db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
+    """
+    Quick sync - update balances only, skip transactions.
+    Much faster (~5 seconds vs minutes).
+    """
+    results = quick_sync_all_institutions(db)
     return {"results": results}
 
 
 @app.post("/api/sync/{institution_id}")
-async def sync_institution(institution_id: int, db: Session = Depends(get_db), _auth: bool = Depends(require_auth)):
-    """Sync a specific institution"""
+async def sync_institution(
+    institution_id: int,
+    full: bool = Query(False, description="Force full 90-day sync"),
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """Sync a specific institution. Uses incremental sync by default."""
     sync_service = SimpleFINSyncService(db)
     try:
-        result = sync_service.sync_institution(institution_id)
+        result = sync_service.sync_institution(institution_id, full_sync=full)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/sync/{institution_id}/quick")
+async def quick_sync_institution(
+    institution_id: int,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_auth)
+):
+    """Quick sync a specific institution - balances only."""
+    sync_service = SimpleFINSyncService(db)
+    try:
+        result = sync_service.sync_institution_quick(institution_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

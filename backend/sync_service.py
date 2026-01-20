@@ -55,9 +55,73 @@ class SimpleFINSyncService:
     def __init__(self, db: Session):
         self.db = db
 
-    def sync_institution(self, institution_id: int) -> dict:
+    def sync_institution_quick(self, institution_id: int) -> dict:
+        """
+        Quick sync - only update account balances, skip transactions.
+        Much faster than full sync (~5 seconds vs minutes).
+        """
+        institution = self.db.query(Institution).filter(
+            Institution.id == institution_id
+        ).first()
+
+        if not institution:
+            raise ValueError(f"Institution {institution_id} not found")
+
+        if not institution.simplefin_access_url:
+            raise ValueError(f"No SimpleFIN access URL for institution {institution_id}")
+
+        logger.info(f"Starting QUICK sync for {institution.name} (balances only)")
+
+        results = {
+            "institution": institution.name,
+            "sync_type": "quick",
+            "accounts_synced": 0,
+            "errors": []
+        }
+
+        try:
+            # Fetch balances only (no transactions)
+            data = simplefin_client.get_balances_only(institution.simplefin_access_url)
+
+            # Get excluded account IDs
+            excluded_ids = {e.simplefin_account_id for e in self.db.query(ExcludedAccount).all()}
+
+            for account_data in data.get("accounts", []):
+                account_id = account_data.get("id")
+                if account_id in excluded_ids:
+                    continue
+
+                # Update account balance
+                account = self._upsert_account(institution_id, account_data)
+                self._record_balance(account)
+                results["accounts_synced"] += 1
+
+            # Update institution status
+            institution.last_sync = datetime.utcnow()
+            institution.sync_status = "success"
+            institution.error_message = None
+            self.db.commit()
+
+            # Calculate net worth
+            self.calculate_net_worth()
+
+            logger.info(f"Quick sync complete: {results['accounts_synced']} accounts updated")
+
+        except Exception as e:
+            logger.error(f"Quick sync error for {institution.name}: {e}")
+            institution.sync_status = "error"
+            institution.error_message = str(e)
+            results["errors"].append(str(e))
+            self.db.commit()
+
+        return results
+
+    def sync_institution(self, institution_id: int, full_sync: bool = False) -> dict:
         """
         Sync all data for an institution from SimpleFIN.
+
+        Uses incremental sync by default (from last_sync date).
+        Set full_sync=True to force 90-day history fetch.
 
         Returns summary of what was synced.
         """
@@ -75,6 +139,7 @@ class SimpleFINSyncService:
 
         results = {
             "institution": institution.name,
+            "sync_type": "full" if full_sync else "incremental",
             "accounts_synced": 0,
             "transactions_added": 0,
             "transactions_updated": 0,
@@ -82,9 +147,15 @@ class SimpleFINSyncService:
         }
 
         try:
-            # Fetch data from SimpleFIN (last 90 days)
-            start_date = datetime.now() - timedelta(days=90)
-            logger.info(f"Requesting SimpleFIN data from {start_date.date()} to now")
+            # Determine start date: incremental from last_sync or full 90-day
+            if full_sync or not institution.last_sync:
+                start_date = datetime.now() - timedelta(days=90)
+                logger.info(f"Full sync: fetching 90 days from {start_date.date()}")
+            else:
+                # Incremental: fetch from last sync minus 3 days buffer (for pending transactions)
+                start_date = institution.last_sync - timedelta(days=3)
+                logger.info(f"Incremental sync: fetching from {start_date.date()} (last sync: {institution.last_sync.date()})")
+
             data = simplefin_client.get_accounts(
                 institution.simplefin_access_url,
                 start_date=start_date
@@ -120,6 +191,7 @@ class SimpleFINSyncService:
     def sync_from_simplefin(self, institution_id: int, data: dict) -> dict:
         """
         Sync accounts and transactions from SimpleFIN response data.
+        Uses batch operations for better performance.
 
         Args:
             institution_id: The institution to attach accounts to
@@ -130,7 +202,8 @@ class SimpleFINSyncService:
         """
         results = {
             "accounts_synced": 0,
-            "transactions_synced": 0,
+            "transactions_added": 0,
+            "transactions_updated": 0,
             "errors": data.get("errors", [])
         }
 
@@ -150,10 +223,10 @@ class SimpleFINSyncService:
                 account = self._upsert_account(institution_id, account_data)
                 results["accounts_synced"] += 1
 
-                # Sync transactions
-                for txn_data in account_data.get("transactions", []):
-                    self._upsert_transaction(account.id, txn_data)
-                    results["transactions_synced"] += 1
+                # Batch sync transactions
+                txn_results = self._batch_upsert_transactions(account.id, account_data.get("transactions", []))
+                results["transactions_added"] += txn_results["added"]
+                results["transactions_updated"] += txn_results["updated"]
 
                 # Record balance history
                 self._record_balance(account)
@@ -168,6 +241,98 @@ class SimpleFINSyncService:
         self.calculate_net_worth()
 
         return results
+
+    def _batch_upsert_transactions(self, account_id: int, transactions: list) -> dict:
+        """
+        Batch insert/update transactions for better performance.
+
+        Returns dict with 'added' and 'updated' counts.
+        """
+        if not transactions:
+            return {"added": 0, "updated": 0}
+
+        # Get all transaction IDs we're about to sync
+        txn_ids = [t.get("id") for t in transactions if t.get("id")]
+
+        # Fetch existing transactions in one query
+        existing_txns = {
+            t.simplefin_transaction_id: t
+            for t in self.db.query(Transaction).filter(
+                Transaction.simplefin_transaction_id.in_(txn_ids)
+            ).all()
+        }
+
+        added = 0
+        updated = 0
+        new_transactions = []
+
+        for txn_data in transactions:
+            txn_id = txn_data.get("id")
+            if not txn_id:
+                continue
+
+            existing = existing_txns.get(txn_id)
+
+            if existing:
+                # Update existing transaction
+                self._update_transaction(existing, txn_data)
+                updated += 1
+            else:
+                # Prepare new transaction for batch insert
+                new_txn = self._create_transaction(account_id, txn_data)
+                new_transactions.append(new_txn)
+                added += 1
+
+        # Batch insert new transactions
+        if new_transactions:
+            self.db.bulk_save_objects(new_transactions)
+
+        return {"added": added, "updated": updated}
+
+    def _create_transaction(self, account_id: int, txn_data: dict) -> Transaction:
+        """Create a new Transaction object (without adding to session)"""
+        txn = Transaction(
+            account_id=account_id,
+            simplefin_transaction_id=txn_data.get("id"),
+            date=txn_data.get("date"),
+            name=txn_data.get("description", "Unknown"),
+            merchant_name=txn_data.get("payee"),
+            amount=txn_data.get("amount", 0),
+            is_pending=txn_data.get("pending", False),
+            original_category=txn_data.get("memo")
+        )
+
+        # Auto-categorize
+        txn.category = categorize_transaction(
+            name=txn.name,
+            merchant_name=txn.merchant_name,
+            original_category=None,
+            original_category_id=None,
+            amount=txn.amount
+        )
+
+        return txn
+
+    def _update_transaction(self, txn: Transaction, txn_data: dict):
+        """Update an existing transaction with new data"""
+        txn.date = txn_data.get("date")
+        txn.name = txn_data.get("description", "Unknown")
+        txn.merchant_name = txn_data.get("payee")
+        txn.amount = txn_data.get("amount", 0)
+        txn.is_pending = txn_data.get("pending", False)
+
+        if txn_data.get("memo"):
+            txn.original_category = txn_data.get("memo")
+
+        # Re-categorize if no user override
+        if not txn.user_category:
+            txn.category = categorize_transaction(
+                name=txn.name,
+                merchant_name=txn.merchant_name,
+                original_category=None,
+                original_category_id=None,
+                amount=txn.amount
+            )
 
     def _upsert_account(self, institution_id: int, account_data: dict) -> Account:
         """Insert or update an account from SimpleFIN data"""
@@ -205,45 +370,6 @@ class SimpleFINSyncService:
 
         self.db.flush()
         return account
-
-    def _upsert_transaction(self, account_id: int, txn_data: dict) -> Transaction:
-        """Insert or update a transaction from SimpleFIN data"""
-        txn_id = txn_data.get("id")
-
-        # Find existing transaction
-        txn = self.db.query(Transaction).filter(
-            Transaction.simplefin_transaction_id == txn_id
-        ).first()
-
-        if not txn:
-            txn = Transaction(
-                account_id=account_id,
-                simplefin_transaction_id=txn_id
-            )
-            self.db.add(txn)
-
-        # Update transaction data
-        txn.date = txn_data.get("date")
-        txn.name = txn_data.get("description", "Unknown")
-        txn.merchant_name = txn_data.get("payee")
-        txn.amount = txn_data.get("amount", 0)
-        txn.is_pending = txn_data.get("pending", False)
-
-        # Store memo in original_category field (for reference)
-        if txn_data.get("memo"):
-            txn.original_category = txn_data.get("memo")
-
-        # Auto-categorize if no user override
-        if not txn.user_category:
-            txn.category = categorize_transaction(
-                name=txn.name,
-                merchant_name=txn.merchant_name,
-                original_category=None,
-                original_category_id=None,
-                amount=txn.amount
-            )
-
-        return txn
 
     def _record_balance(self, account: Account):
         """Record or update today's balance snapshot"""
@@ -341,8 +467,14 @@ class SimpleFINSyncService:
         return snapshot
 
 
-def sync_all_institutions(db: Session) -> list:
-    """Sync all active SimpleFIN institutions"""
+def sync_all_institutions(db: Session, full_sync: bool = False) -> list:
+    """
+    Sync all active SimpleFIN institutions.
+
+    Args:
+        db: Database session
+        full_sync: If True, fetch full 90-day history. If False, use incremental sync.
+    """
     institutions = db.query(Institution).filter(
         Institution.is_active == True,
         Institution.provider == "simplefin"
@@ -353,10 +485,37 @@ def sync_all_institutions(db: Session) -> list:
 
     for institution in institutions:
         try:
-            result = sync_service.sync_institution(institution.id)
+            result = sync_service.sync_institution(institution.id, full_sync=full_sync)
             results.append(result)
         except Exception as e:
             logger.error(f"Failed to sync {institution.name}: {e}")
+            results.append({
+                "institution": institution.name,
+                "error": str(e)
+            })
+
+    return results
+
+
+def quick_sync_all_institutions(db: Session) -> list:
+    """
+    Quick sync all institutions - balances only, no transactions.
+    Much faster than full sync.
+    """
+    institutions = db.query(Institution).filter(
+        Institution.is_active == True,
+        Institution.provider == "simplefin"
+    ).all()
+
+    results = []
+    sync_service = SimpleFINSyncService(db)
+
+    for institution in institutions:
+        try:
+            result = sync_service.sync_institution_quick(institution.id)
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Failed to quick sync {institution.name}: {e}")
             results.append({
                 "institution": institution.name,
                 "error": str(e)
