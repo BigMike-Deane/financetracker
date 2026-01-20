@@ -590,6 +590,78 @@ function InstitutionCard({ institution, onRemove, onSync }) {
   )
 }
 
+function SyncProgressModal({ isOpen, syncType, progress, currentInstitution, results }) {
+  if (!isOpen) return null
+
+  const successCount = results.filter(r => !r.error).length
+  const errorCount = results.filter(r => r.error).length
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-2xl p-6 max-w-sm w-full">
+        <div className="text-center mb-4">
+          <div className="text-lg font-semibold mb-1">
+            {syncType === 'quick' ? 'Quick Sync' : 'Full Sync'}
+          </div>
+          <div className="text-dark-400 text-sm">
+            {progress.current < progress.total
+              ? `Syncing ${currentInstitution || '...'}`
+              : 'Sync complete!'}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div className="mb-4">
+          <div className="flex justify-between text-xs text-dark-400 mb-1">
+            <span>{progress.current} of {progress.total}</span>
+            <span>{Math.round((progress.current / progress.total) * 100)}%</span>
+          </div>
+          <div className="h-2 bg-dark-700 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${
+                progress.current === progress.total ? 'bg-green-500' : 'bg-primary-500'
+              }`}
+              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Results summary (shown when complete) */}
+        {progress.current === progress.total && results.length > 0 && (
+          <div className="space-y-2 text-sm">
+            {successCount > 0 && (
+              <div className="flex items-center gap-2 text-green-400">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{successCount} institution{successCount !== 1 ? 's' : ''} synced</span>
+              </div>
+            )}
+            {errorCount > 0 && (
+              <div className="flex items-center gap-2 text-red-400">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Spinner while syncing */}
+        {progress.current < progress.total && (
+          <div className="flex justify-center">
+            <svg className="animate-spin w-8 h-8 text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Settings({ onLogout }) {
   const [institutions, setInstitutions] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -597,6 +669,9 @@ export default function Settings({ onLogout }) {
   const [syncing, setSyncing] = useState(false)
   const [syncType, setSyncType] = useState(null) // 'quick' or 'full'
   const [successMessage, setSuccessMessage] = useState(null)
+  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0 })
+  const [currentSyncInstitution, setCurrentSyncInstitution] = useState(null)
+  const [syncResults, setSyncResults] = useState([])
 
   const fetchData = async () => {
     try {
@@ -636,47 +711,109 @@ export default function Settings({ onLogout }) {
   }
 
   const handleQuickSyncAll = async () => {
+    if (institutions.length === 0) return
+
     setSyncing(true)
     setSyncType('quick')
-    try {
-      await api.quickSyncAll()
-      await fetchData()
-      setSuccessMessage('Quick sync complete - balances updated!')
-      setTimeout(() => setSuccessMessage(null), 3000)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setSyncing(false)
-      setSyncType(null)
+    setSyncProgress({ current: 0, total: institutions.length })
+    setSyncResults([])
+
+    const results = []
+    for (let i = 0; i < institutions.length; i++) {
+      const inst = institutions[i]
+      setCurrentSyncInstitution(inst.name)
+      setSyncProgress({ current: i, total: institutions.length })
+
+      try {
+        await api.quickSyncInstitution(inst.id)
+        results.push({ institution: inst.name, success: true })
+      } catch (err) {
+        results.push({ institution: inst.name, error: err.message })
+      }
     }
+
+    setSyncProgress({ current: institutions.length, total: institutions.length })
+    setSyncResults(results)
+    setCurrentSyncInstitution(null)
+
+    // Brief delay to show completion before closing
+    await new Promise(r => setTimeout(r, 1500))
+
+    await fetchData()
+    setSyncing(false)
+    setSyncType(null)
+
+    const errors = results.filter(r => r.error).length
+    if (errors === 0) {
+      setSuccessMessage('Quick sync complete - balances updated!')
+    } else {
+      setSuccessMessage(`Quick sync complete with ${errors} error${errors !== 1 ? 's' : ''}`)
+    }
+    setTimeout(() => setSuccessMessage(null), 3000)
   }
 
   const handleFullSyncAll = async () => {
+    if (institutions.length === 0) return
+
     setSyncing(true)
     setSyncType('full')
-    try {
-      await api.syncAll(true)
-      await fetchData()
-      setSuccessMessage('Full sync complete - balances and transactions updated!')
-      setTimeout(() => setSuccessMessage(null), 3000)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setSyncing(false)
-      setSyncType(null)
+    setSyncProgress({ current: 0, total: institutions.length })
+    setSyncResults([])
+
+    const results = []
+    for (let i = 0; i < institutions.length; i++) {
+      const inst = institutions[i]
+      setCurrentSyncInstitution(inst.name)
+      setSyncProgress({ current: i, total: institutions.length })
+
+      try {
+        await api.syncInstitution(inst.id, true)
+        results.push({ institution: inst.name, success: true })
+      } catch (err) {
+        results.push({ institution: inst.name, error: err.message })
+      }
     }
+
+    setSyncProgress({ current: institutions.length, total: institutions.length })
+    setSyncResults(results)
+    setCurrentSyncInstitution(null)
+
+    // Brief delay to show completion before closing
+    await new Promise(r => setTimeout(r, 1500))
+
+    await fetchData()
+    setSyncing(false)
+    setSyncType(null)
+
+    const errors = results.filter(r => r.error).length
+    if (errors === 0) {
+      setSuccessMessage('Full sync complete - balances and transactions updated!')
+    } else {
+      setSuccessMessage(`Full sync complete with ${errors} error${errors !== 1 ? 's' : ''}`)
+    }
+    setTimeout(() => setSuccessMessage(null), 3000)
   }
 
   return (
-    <div className="p-4">
-      <h1 className="text-xl font-bold mb-4">Settings</h1>
+    <>
+      {/* Sync Progress Modal */}
+      <SyncProgressModal
+        isOpen={syncing}
+        syncType={syncType}
+        progress={syncProgress}
+        currentInstitution={currentSyncInstitution}
+        results={syncResults}
+      />
 
-      {/* Success Message */}
-      {successMessage && (
-        <div className="mb-4 p-4 bg-green-500/20 border border-green-500/30 rounded-xl text-green-400 text-sm">
-          {successMessage}
-        </div>
-      )}
+      <div className="p-4">
+        <h1 className="text-xl font-bold mb-4">Settings</h1>
+
+        {/* Success Message */}
+        {successMessage && (
+          <div className="mb-4 p-4 bg-green-500/20 border border-green-500/30 rounded-xl text-green-400 text-sm">
+            {successMessage}
+          </div>
+        )}
 
       {/* Account Summary */}
       {accounts.length > 0 && <AccountsSummary accounts={accounts} />}
@@ -778,18 +915,19 @@ export default function Settings({ onLogout }) {
         </div>
       </div>
 
-      {/* Logout Button */}
-      {onLogout && (
-        <button
-          onClick={onLogout}
-          className="mt-6 w-full py-3 bg-red-500/20 text-red-400 rounded-xl font-semibold hover:bg-red-500/30 transition-colors"
-        >
-          Sign Out
-        </button>
-      )}
+        {/* Logout Button */}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="mt-6 w-full py-3 bg-red-500/20 text-red-400 rounded-xl font-semibold hover:bg-red-500/30 transition-colors"
+          >
+            Sign Out
+          </button>
+        )}
 
-      {/* Bottom spacer for nav clearance */}
-      <div className="h-4" />
-    </div>
+        {/* Bottom spacer for nav clearance */}
+        <div className="h-4" />
+      </div>
+    </>
   )
 }
